@@ -48,6 +48,18 @@ class RawResponse:
             return response
 
         try:
+            # Skip 100 Continue responses (Issue #8 fix)
+            # Server may send "HTTP/1.1 100 Continue" before the actual response
+            while raw_data.startswith(b"HTTP/1.1 100") or raw_data.startswith(b"HTTP/1.0 100"):
+                if b"\r\n\r\n" in raw_data:
+                    # Find end of 100 response and skip it
+                    idx = raw_data.index(b"\r\n\r\n") + 4
+                    raw_data = raw_data[idx:]
+                    if not raw_data:
+                        return response
+                else:
+                    break
+
             # Split headers and body
             if b"\r\n\r\n" in raw_data:
                 header_section, body = raw_data.split(b"\r\n\r\n", 1)
@@ -407,6 +419,12 @@ class AsyncRawHttpClient:
                 ),
                 timeout=self.config.connect_timeout,
             )
+
+            # Set TCP_NODELAY for accurate timing measurements (Issue #12 fix)
+            # This disables Nagle's algorithm which can buffer small writes
+            sock = self._writer.get_extra_info('socket')
+            if sock:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
             self._connected_host = host
             self._connected_port = port

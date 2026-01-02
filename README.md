@@ -74,6 +74,7 @@ cd http-smuggler
 ```
 
 The start script automatically:
+
 - Sets up virtual environment on first run
 - Installs all dependencies
 - Shows interactive menu or runs commands directly

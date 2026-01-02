@@ -449,30 +449,101 @@ def detect(target: str, timeout: float):
         table = Table(title="Protocol Detection Results", box=box.ROUNDED)
         table.add_column("Protocol/Feature", style="cyan")
         table.add_column("Status", style="white")
+        table.add_column("Details", style="dim")
         
-        table.add_row("HTTP/1.1", "[green]Supported[/green]" if result.supports_http1 else "[red]No[/red]")
-        table.add_row("HTTP/2", "[green]Supported[/green]" if result.supports_http2 else "[red]No[/red]")
-        table.add_row("h2c (HTTP/2 Cleartext)", "[green]Supported[/green]" if result.supports_h2c else "[red]No[/red]")
-        table.add_row("WebSocket", "[green]Supported[/green]" if result.supports_websocket else "[red]No[/red]")
-        table.add_row("Keep-Alive", "[green]Yes[/green]" if result.supports_keepalive else "[red]No[/red]")
-        table.add_row("Pipelining", "[green]Yes[/green]" if result.supports_pipelining else "[red]No[/red]")
+        # HTTP/1.1
+        table.add_row(
+            "HTTP/1.1",
+            "[green]✓ Supported[/green]" if result.supports_http1 else "[red]✗ No[/red]",
+            ""
+        )
         
-        if result.alpn_protocols:
-            table.add_row("ALPN Protocols", ", ".join(result.alpn_protocols))
+        # HTTP/2
+        h2_details = ""
+        if result.supports_http2:
+            h2_details = f"via {result.h2_detection_method or 'unknown'}"
+            if result.h2_verified:
+                h2_details += " (verified)"
+        table.add_row(
+            "HTTP/2",
+            "[green]✓ Supported[/green]" if result.supports_http2 else "[yellow]✗ Not detected[/yellow]",
+            h2_details
+        )
         
-        if result.server_header:
-            table.add_row("Server", result.server_header)
+        # h2c
+        table.add_row(
+            "h2c (HTTP/2 Cleartext)",
+            "[green]✓ Supported[/green]" if result.supports_h2c else "[dim]✗ No[/dim]",
+            ""
+        )
         
-        if result.via_header:
-            table.add_row("Via (Proxy)", result.via_header)
+        # ALPN
+        alpn_status = "[green]✓ Supported[/green]" if result.alpn_supported else "[yellow]✗ Not supported[/yellow]"
+        alpn_details = ", ".join(result.alpn_protocols) if result.alpn_protocols else ""
+        table.add_row("ALPN", alpn_status, alpn_details)
         
-        if result.is_proxied:
-            table.add_row("Proxy Type", result.proxy_type or "Unknown")
+        # NPN (if detected)
+        if result.npn_supported or result.npn_protocols:
+            npn_details = ", ".join(result.npn_protocols) if result.npn_protocols else ""
+            table.add_row("NPN (legacy)", "[green]✓ Supported[/green]", npn_details)
+        
+        # TLS version
+        if result.tls_version:
+            table.add_row("TLS Version", result.tls_version, "")
+        
+        # WebSocket
+        ws_details = ", ".join(result.websocket_paths) if result.websocket_paths else ""
+        table.add_row(
+            "WebSocket",
+            "[green]✓ Supported[/green]" if result.supports_websocket else "[dim]✗ No[/dim]",
+            ws_details[:50] + "..." if len(ws_details) > 50 else ws_details
+        )
+        
+        # Connection behavior
+        table.add_row(
+            "Keep-Alive",
+            "[green]✓ Yes[/green]" if result.supports_keepalive else "[dim]✗ No[/dim]",
+            ""
+        )
+        table.add_row(
+            "Pipelining",
+            "[green]✓ Yes[/green]" if result.supports_pipelining else "[dim]✗ No[/dim]",
+            ""
+        )
         
         console.print(table)
         
-        if result.websocket_paths:
-            console.print(f"\n[cyan]WebSocket paths found:[/cyan] {', '.join(result.websocket_paths)}")
+        # Server information
+        if result.server_header or result.via_header or result.is_proxied:
+            console.print()
+            server_table = Table(title="Server Information", box=box.ROUNDED)
+            server_table.add_column("Header", style="cyan")
+            server_table.add_column("Value", style="white")
+            
+            if result.server_header:
+                server_table.add_row("Server", result.server_header)
+            
+            if result.via_header:
+                server_table.add_row("Via", result.via_header)
+            
+            if result.x_powered_by:
+                server_table.add_row("X-Powered-By", result.x_powered_by)
+            
+            if result.is_proxied:
+                server_table.add_row("Proxy Detected", result.proxy_type or "Unknown type")
+            
+            console.print(server_table)
+        
+        # Summary
+        console.print()
+        if result.supports_http2:
+            console.print("[green]✓[/green] Target supports HTTP/2 - H2.CL, H2.TE, H2.CRLF attacks are applicable")
+        if result.supports_h2c:
+            console.print("[green]✓[/green] Target supports h2c upgrade - h2c tunneling attacks are applicable")
+        if result.supports_websocket:
+            console.print("[green]✓[/green] Target supports WebSocket - WS.Version, WS.Upgrade attacks are applicable")
+        if result.is_proxied:
+            console.print("[yellow]![/yellow] Proxy/CDN detected - Classic CL.TE, TE.CL, TE.TE attacks are most relevant")
         
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

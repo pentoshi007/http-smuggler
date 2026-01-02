@@ -45,11 +45,16 @@ find_python() {
     for cmd in python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
         if command -v "$cmd" &> /dev/null; then
             version=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
-            major=$(echo "$version" | cut -d. -f1)
-            minor=$(echo "$version" | cut -d. -f2)
-            if [ "$major" -ge 3 ] && [ "$minor" -ge 9 ]; then
-                echo "$cmd"
-                return 0
+            if [ -n "$version" ]; then
+                major=$(echo "$version" | cut -d. -f1)
+                minor=$(echo "$version" | cut -d. -f2)
+                # Ensure major and minor are valid integers
+                if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$minor" =~ ^[0-9]+$ ]]; then
+                    if [ "$major" -ge 3 ] && [ "$minor" -ge 9 ]; then
+                        echo "$cmd"
+                        return 0
+                    fi
+                fi
             fi
         fi
     done

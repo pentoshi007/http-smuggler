@@ -55,10 +55,32 @@ A powerful, automated security tool for detecting all known HTTP request smuggli
 
 ## 📦 Installation
 
+### Quick Setup (Recommended)
+
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/http-smuggler.git
+git clone https://github.com/pentoshi007/http-smuggler.git
 cd http-smuggler
+
+# Run setup script (creates venv, installs dependencies)
+# Linux/macOS:
+./setup.sh
+
+# Windows (PowerShell):
+.\setup.ps1
+```
+
+### Manual Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/pentoshi007/http-smuggler.git
+cd http-smuggler
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# or: .\venv\Scripts\Activate.ps1  # Windows
 
 # Install dependencies
 pip install -r requirements.txt

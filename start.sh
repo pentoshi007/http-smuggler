@@ -39,6 +39,23 @@ needs_setup() {
     return 0  # Setup needed
 }
 
+# Find suitable Python (3.9+)
+find_python() {
+    # List of Python commands to try, in order of preference (newer first)
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
+        if command -v "$cmd" &> /dev/null; then
+            version=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+            major=$(echo "$version" | cut -d. -f1)
+            minor=$(echo "$version" | cut -d. -f2)
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 9 ]; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 # Run setup
 run_setup() {
     echo -e "${YELLOW}══════════════════════════════════════════════════════════${NC}"
@@ -48,25 +65,59 @@ run_setup() {
 
     # Check Python version
     echo -e "${BLUE}[1/4] Checking Python version...${NC}"
-    if command -v python3 &> /dev/null; then
-        PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
-        PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
-        
-        if [ "$PYTHON_MAJOR" -ge 3 ] && [ "$PYTHON_MINOR" -ge 9 ]; then
-            echo -e "${GREEN}       ✓ Python $PYTHON_VERSION${NC}"
-        else
-            echo -e "${RED}       ✗ Python 3.9+ required, found $PYTHON_VERSION${NC}"
-            exit 1
-        fi
+    
+    PYTHON_CMD=$(find_python)
+    
+    if [ -n "$PYTHON_CMD" ]; then
+        PYTHON_VERSION=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        echo -e "${GREEN}       ✓ Found $PYTHON_CMD ($PYTHON_VERSION)${NC}"
     else
-        echo -e "${RED}       ✗ Python 3 not found. Please install Python 3.9+${NC}"
+        # Show what's available and how to install
+        echo -e "${RED}       ✗ Python 3.9+ required${NC}"
+        echo ""
+        
+        # Check what Python versions are installed
+        echo -e "${YELLOW}Installed Python versions:${NC}"
+        for cmd in python python3 python3.8 python3.9 python3.10 python3.11 python3.12 python3.13; do
+            if command -v "$cmd" &> /dev/null; then
+                ver=$("$cmd" --version 2>&1 | head -1)
+                echo -e "  - $cmd: $ver"
+            fi
+        done
+        echo ""
+        
+        # Provide installation instructions based on OS
+        echo -e "${CYAN}To install Python 3.11+ on your system:${NC}"
+        echo ""
+        if [ -f /etc/debian_version ]; then
+            echo -e "${GREEN}Ubuntu/Debian:${NC}"
+            echo "  sudo apt update"
+            echo "  sudo apt install python3.11 python3.11-venv python3.11-dev"
+            echo ""
+            echo -e "${YELLOW}Or use deadsnakes PPA for newer versions:${NC}"
+            echo "  sudo add-apt-repository ppa:deadsnakes/ppa"
+            echo "  sudo apt update"
+            echo "  sudo apt install python3.11 python3.11-venv"
+        elif [ -f /etc/redhat-release ]; then
+            echo -e "${GREEN}RHEL/CentOS/Fedora:${NC}"
+            echo "  sudo dnf install python3.11"
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+            echo -e "${GREEN}macOS (using Homebrew):${NC}"
+            echo "  brew install python@3.11"
+        else
+            echo -e "${GREEN}Generic (using pyenv):${NC}"
+            echo "  curl https://pyenv.run | bash"
+            echo "  pyenv install 3.11"
+            echo "  pyenv global 3.11"
+        fi
+        echo ""
+        echo -e "${YELLOW}After installing, run ./start.sh again${NC}"
         exit 1
     fi
 
     # Create virtual environment
     echo -e "${BLUE}[2/4] Creating virtual environment...${NC}"
-    python3 -m venv venv
+    "$PYTHON_CMD" -m venv venv
     echo -e "${GREEN}       ✓ Created${NC}"
 
     # Activate and install

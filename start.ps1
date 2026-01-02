@@ -34,6 +34,37 @@ function Test-NeedsSetup {
     return $true
 }
 
+# Find suitable Python (3.9+)
+function Find-Python {
+    # List of Python commands to try, in order of preference (newer first)
+    $pythonCommands = @("python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python", "py -3.13", "py -3.12", "py -3.11", "py -3.10", "py -3.9", "py")
+    
+    foreach ($cmd in $pythonCommands) {
+        try {
+            $cmdParts = $cmd -split " "
+            if ($cmdParts.Count -gt 1) {
+                $result = & $cmdParts[0] $cmdParts[1] --version 2>&1
+            } else {
+                $result = & $cmd --version 2>&1
+            }
+            
+            if ($result -match "Python (\d+)\.(\d+)") {
+                $major = [int]$Matches[1]
+                $minor = [int]$Matches[2]
+                if ($major -ge 3 -and $minor -ge 9) {
+                    return @{
+                        Command = $cmd
+                        Version = "$major.$minor"
+                    }
+                }
+            }
+        } catch {
+            # Command not found, try next
+        }
+    }
+    return $null
+}
+
 # Run setup
 function Invoke-Setup {
     Write-Host "===========================================================" -ForegroundColor Yellow
@@ -43,26 +74,52 @@ function Invoke-Setup {
 
     # Check Python version
     Write-Host "[1/4] Checking Python version..." -ForegroundColor Blue
-    try {
-        $pythonVersion = python --version 2>&1
-        if ($pythonVersion -match "Python (\d+)\.(\d+)") {
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            if ($major -ge 3 -and $minor -ge 9) {
-                Write-Host "      [OK] $pythonVersion" -ForegroundColor Green
-            } else {
-                Write-Host "      [ERROR] Python 3.9+ required, found $pythonVersion" -ForegroundColor Red
-                exit 1
-            }
+    
+    $pythonInfo = Find-Python
+    
+    if ($pythonInfo) {
+        Write-Host "      [OK] Found $($pythonInfo.Command) ($($pythonInfo.Version))" -ForegroundColor Green
+        $script:PythonCmd = $pythonInfo.Command
+    } else {
+        Write-Host "      [ERROR] Python 3.9+ required" -ForegroundColor Red
+        Write-Host ""
+        
+        # Check what Python versions are installed
+        Write-Host "Installed Python versions:" -ForegroundColor Yellow
+        foreach ($cmd in @("python", "python3", "py")) {
+            try {
+                $ver = & $cmd --version 2>&1
+                Write-Host "  - $cmd : $ver"
+            } catch {}
         }
-    } catch {
-        Write-Host "      [ERROR] Python not found. Install from https://python.org" -ForegroundColor Red
+        Write-Host ""
+        
+        # Provide installation instructions
+        Write-Host "To install Python 3.11+ on Windows:" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "Option 1: Download from python.org" -ForegroundColor Green
+        Write-Host "  Visit: https://www.python.org/downloads/"
+        Write-Host "  Download Python 3.11 or newer"
+        Write-Host "  During install, check 'Add Python to PATH'"
+        Write-Host ""
+        Write-Host "Option 2: Using winget" -ForegroundColor Green
+        Write-Host "  winget install Python.Python.3.11"
+        Write-Host ""
+        Write-Host "Option 3: Using chocolatey" -ForegroundColor Green
+        Write-Host "  choco install python311"
+        Write-Host ""
+        Write-Host "After installing, restart your terminal and run .\start.ps1 again" -ForegroundColor Yellow
         exit 1
     }
 
     # Create virtual environment
     Write-Host "[2/4] Creating virtual environment..." -ForegroundColor Blue
-    python -m venv venv
+    $cmdParts = $script:PythonCmd -split " "
+    if ($cmdParts.Count -gt 1) {
+        & $cmdParts[0] $cmdParts[1] -m venv venv
+    } else {
+        & $script:PythonCmd -m venv venv
+    }
     Write-Host "      [OK] Created" -ForegroundColor Green
 
     # Activate and install

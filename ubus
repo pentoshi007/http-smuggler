@@ -1,0 +1,32 @@
+{
+  "target": "https://letsubus.web.app/",
+  "scan_start": "2026-01-02T11:13:27.841195",
+  "scan_end": "2026-01-02T11:21:41.616256",
+  "duration_seconds": 493.775061,
+  "protocol": {
+    "version": "HTTP/2",
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "h2c_supported": false,
+    "websocket_supported": false,
+    "proxy_detected": false
+  },
+  "discovery": {
+    "endpoints_found": 1,
+    "endpoints_tested": 1
+  },
+  "vulnerabilities": [],
+  "summary": {
+    "total_vulnerabilities": 0,
+    "critical": 0,
+    "high": 0,
+    "variants_found": []
+  },
+  "_metadata": {
+    "generator": "HTTP-Smuggler",
+    "version": "1.0.0",
+    "generated_at": "2026-01-02T11:21:41.623158Z"
+  }
+}

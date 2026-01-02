@@ -63,18 +63,24 @@ class ParsedURL:
         return f"{self.host}:{self.port}"
 
 
-def parse_url(url: str) -> ParsedURL:
+def parse_url(url: str, default_scheme: str = "https") -> ParsedURL:
     """Parse URL into components.
     
     Args:
-        url: Full URL string
+        url: Full URL string (scheme is optional, defaults to https)
+        default_scheme: Default scheme if not provided (default: https)
     
     Returns:
         ParsedURL with all components
     """
+    # If no scheme provided, urlparse treats the whole URL as path
+    # Add default scheme to properly parse hostname
+    if not url.startswith(("http://", "https://")):
+        url = f"{default_scheme}://{url}"
+    
     parsed = urlparse(url)
     
-    scheme = parsed.scheme or "http"
+    scheme = parsed.scheme or default_scheme
     host = parsed.hostname or ""
     
     if parsed.port:

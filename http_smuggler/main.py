@@ -188,6 +188,19 @@ def scan(
     if not quiet:
         print_banner()
     
+    # Auto-add https:// if no scheme provided
+    if not target.startswith(("http://", "https://")):
+        target = f"https://{target}"
+        if not quiet:
+            console.print(f"[dim]Note: No scheme provided, using https://[/dim]")
+    
+    # Validate URL
+    from http_smuggler.utils.helpers import parse_url
+    parsed = parse_url(target)
+    if not parsed.host:
+        console.print(f"[red]Error:[/red] Invalid URL: {target}")
+        sys.exit(1)
+    
     # Setup logging
     log_level = "DEBUG" if verbose else "INFO"
     setup_logging(level=log_level, quiet=quiet)
@@ -428,11 +441,25 @@ def detect(target: str, timeout: float):
     """Detect protocols supported by TARGET.
     
     Performs protocol detection without active smuggling testing.
+    If no scheme (http:// or https://) is provided, defaults to https://.
     """
     print_banner()
     
     from http_smuggler.detection.protocol import ProtocolDetector
     from http_smuggler.core.config import NetworkConfig
+    from http_smuggler.utils.helpers import parse_url
+    
+    # Auto-add https:// if no scheme provided
+    original_target = target
+    if not target.startswith(("http://", "https://")):
+        target = f"https://{target}"
+        console.print(f"[dim]Note: No scheme provided, using https://[/dim]")
+    
+    # Parse and validate URL
+    parsed = parse_url(target)
+    if not parsed.host:
+        console.print(f"[red]Error:[/red] Invalid URL: {original_target}")
+        sys.exit(1)
     
     config = NetworkConfig(connect_timeout=timeout, read_timeout=timeout)
     detector = ProtocolDetector(config)

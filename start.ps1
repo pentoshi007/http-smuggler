@@ -107,57 +107,83 @@ function Show-Help {
 
 # Interactive menu
 function Show-Menu {
-    Write-Host "What would you like to do?" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  1) Detect protocols on a target" -ForegroundColor White
-    Write-Host "  2) Scan for vulnerabilities" -ForegroundColor White
-    Write-Host "  3) List supported variants" -ForegroundColor White
-    Write-Host "  4) List TE obfuscations" -ForegroundColor White
-    Write-Host "  5) Show help" -ForegroundColor White
-    Write-Host "  6) Open shell with environment" -ForegroundColor White
-    Write-Host "  q) Quit" -ForegroundColor White
-    Write-Host ""
-    
-    $choice = Read-Host "Select option"
+    while ($true) {
+        Write-Host ""
+        Write-Host "What would you like to do?" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  1) Detect protocols on a target" -ForegroundColor White
+        Write-Host "  2) Scan for vulnerabilities" -ForegroundColor White
+        Write-Host "  3) List supported variants" -ForegroundColor White
+        Write-Host "  4) List TE obfuscations" -ForegroundColor White
+        Write-Host "  5) Show help" -ForegroundColor White
+        Write-Host "  6) Open shell with environment" -ForegroundColor White
+        Write-Host "  q) Quit" -ForegroundColor White
+        Write-Host ""
+        
+        $choice = Read-Host "Select option"
 
-    switch ($choice) {
-        "1" {
-            $targetUrl = Read-Host "Enter target URL"
-            if ($targetUrl) {
-                http-smuggler detect $targetUrl
-            }
-        }
-        "2" {
-            $targetUrl = Read-Host "Enter target URL"
-            if ($targetUrl) {
-                $outputFile = Read-Host "Output file (leave empty for console)"
-                if ($outputFile) {
-                    http-smuggler scan $targetUrl -o $outputFile
-                } else {
-                    http-smuggler scan $targetUrl
+        switch ($choice) {
+            "1" {
+                Write-Host ""
+                $targetUrl = Read-Host "Enter target URL"
+                if ($targetUrl) {
+                    Write-Host ""
+                    http-smuggler detect $targetUrl
                 }
+                Write-Host ""
+                Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+                Read-Host
             }
-        }
-        "3" {
-            http-smuggler list-variants
-        }
-        "4" {
-            http-smuggler list-obfuscations
-        }
-        "5" {
-            http-smuggler --help
-        }
-        "6" {
-            Write-Host "Environment activated. Type 'exit' to leave." -ForegroundColor Green
-            Write-Host "Try: http-smuggler --help" -ForegroundColor Blue
-            cmd /k
-        }
-        "q" {
-            Write-Host "Goodbye!" -ForegroundColor Green
-            exit 0
-        }
-        default {
-            Write-Host "Invalid option" -ForegroundColor Red
+            "2" {
+                Write-Host ""
+                $targetUrl = Read-Host "Enter target URL"
+                if ($targetUrl) {
+                    $outputFile = Read-Host "Output file (leave empty for console)"
+                    Write-Host ""
+                    if ($outputFile) {
+                        http-smuggler scan $targetUrl -o $outputFile
+                    } else {
+                        http-smuggler scan $targetUrl
+                    }
+                }
+                Write-Host ""
+                Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+                Read-Host
+            }
+            "3" {
+                Write-Host ""
+                http-smuggler list-variants
+                Write-Host ""
+                Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+                Read-Host
+            }
+            "4" {
+                Write-Host ""
+                http-smuggler list-obfuscations
+                Write-Host ""
+                Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+                Read-Host
+            }
+            "5" {
+                Write-Host ""
+                http-smuggler --help
+                Write-Host ""
+                Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+                Read-Host
+            }
+            "6" {
+                Write-Host "Environment activated. Type 'exit' to return to menu." -ForegroundColor Green
+                Write-Host "Try: http-smuggler --help" -ForegroundColor Blue
+                powershell
+            }
+            "q" {
+                Write-Host ""
+                Write-Host "Goodbye! " -ForegroundColor Green
+                exit 0
+            }
+            default {
+                Write-Host "Invalid option. Please try again." -ForegroundColor Red
+            }
         }
     }
 }

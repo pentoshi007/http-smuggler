@@ -111,58 +111,84 @@ show_help() {
 
 # Interactive menu
 show_menu() {
-    echo -e "${CYAN}What would you like to do?${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} Detect protocols on a target"
-    echo -e "  ${GREEN}2)${NC} Scan for vulnerabilities"
-    echo -e "  ${GREEN}3)${NC} List supported variants"
-    echo -e "  ${GREEN}4)${NC} List TE obfuscations"
-    echo -e "  ${GREEN}5)${NC} Show help"
-    echo -e "  ${GREEN}6)${NC} Open shell with environment"
-    echo -e "  ${GREEN}q)${NC} Quit"
-    echo ""
-    read -p "Select option: " choice
+    while true; do
+        echo ""
+        echo -e "${CYAN}What would you like to do?${NC}"
+        echo ""
+        echo -e "  ${GREEN}1)${NC} Detect protocols on a target"
+        echo -e "  ${GREEN}2)${NC} Scan for vulnerabilities"
+        echo -e "  ${GREEN}3)${NC} List supported variants"
+        echo -e "  ${GREEN}4)${NC} List TE obfuscations"
+        echo -e "  ${GREEN}5)${NC} Show help"
+        echo -e "  ${GREEN}6)${NC} Open shell with environment"
+        echo -e "  ${GREEN}q)${NC} Quit"
+        echo ""
+        read -p "Select option: " choice
 
-    case $choice in
-        1)
-            read -p "Enter target URL: " target_url
-            if [ -n "$target_url" ]; then
-                http-smuggler detect "$target_url"
-            fi
-            ;;
-        2)
-            read -p "Enter target URL: " target_url
-            if [ -n "$target_url" ]; then
-                read -p "Output file (leave empty for console): " output_file
-                if [ -n "$output_file" ]; then
-                    http-smuggler scan "$target_url" -o "$output_file"
-                else
-                    http-smuggler scan "$target_url"
+        case $choice in
+            1)
+                echo ""
+                read -p "Enter target URL: " target_url
+                if [ -n "$target_url" ]; then
+                    echo ""
+                    http-smuggler detect "$target_url"
                 fi
-            fi
-            ;;
-        3)
-            http-smuggler list-variants
-            ;;
-        4)
-            http-smuggler list-obfuscations
-            ;;
-        5)
-            http-smuggler --help
-            ;;
-        6)
-            echo -e "${GREEN}Environment activated. Type 'exit' to leave.${NC}"
-            echo -e "${BLUE}Try: http-smuggler --help${NC}"
-            exec $SHELL
-            ;;
-        q|Q)
-            echo -e "${GREEN}Goodbye!${NC}"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Invalid option${NC}"
-            ;;
-    esac
+                echo ""
+                echo -e "${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            2)
+                echo ""
+                read -p "Enter target URL: " target_url
+                if [ -n "$target_url" ]; then
+                    read -p "Output file (leave empty for console): " output_file
+                    echo ""
+                    if [ -n "$output_file" ]; then
+                        http-smuggler scan "$target_url" -o "$output_file"
+                    else
+                        http-smuggler scan "$target_url"
+                    fi
+                fi
+                echo ""
+                echo -e "${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            3)
+                echo ""
+                http-smuggler list-variants
+                echo ""
+                echo -e "${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            4)
+                echo ""
+                http-smuggler list-obfuscations
+                echo ""
+                echo -e "${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            5)
+                echo ""
+                http-smuggler --help
+                echo ""
+                echo -e "${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            6)
+                echo -e "${GREEN}Environment activated. Type 'exit' to return to menu.${NC}"
+                echo -e "${BLUE}Try: http-smuggler --help${NC}"
+                $SHELL
+                ;;
+            q|Q)
+                echo ""
+                echo -e "${GREEN}Goodbye! 👋${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Invalid option. Please try again.${NC}"
+                ;;
+        esac
+    done
 }
 
 # Main

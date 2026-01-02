@@ -23,51 +23,65 @@ A powerful, automated security tool for detecting all known HTTP request smuggli
 ## 🚀 Supported Variants
 
 ### Classic HTTP/1.1
-| Variant | Description |
-|---------|-------------|
+
+| Variant   | Description                                                  |
+| --------- | ------------------------------------------------------------ |
 | **CL.TE** | Frontend uses Content-Length, Backend uses Transfer-Encoding |
 | **TE.CL** | Frontend uses Transfer-Encoding, Backend uses Content-Length |
-| **TE.TE** | Transfer-Encoding obfuscation (56 mutations) |
-| **CL.CL** | Duplicate Content-Length headers |
-| **CL.0** | Backend ignores Content-Length |
-| **0.CL** | Frontend ignores body, Backend reads CL |
+| **TE.TE** | Transfer-Encoding obfuscation (56 mutations)                 |
+| **CL.CL** | Duplicate Content-Length headers                             |
+| **CL.0**  | Backend ignores Content-Length                               |
+| **0.CL**  | Frontend ignores body, Backend reads CL                      |
 
 ### HTTP/2
-| Variant | Description |
-|---------|-------------|
-| **H2.CL** | HTTP/2 to HTTP/1.1 with Content-Length injection |
-| **H2.TE** | HTTP/2 to HTTP/1.1 with Transfer-Encoding injection |
-| **H2.CRLF** | CRLF injection in HTTP/2 headers |
-| **H2.0** | HTTP/2 request tunneling |
-| **h2c** | Cleartext HTTP/2 upgrade smuggling |
+
+| Variant     | Description                                         |
+| ----------- | --------------------------------------------------- |
+| **H2.CL**   | HTTP/2 to HTTP/1.1 with Content-Length injection    |
+| **H2.TE**   | HTTP/2 to HTTP/1.1 with Transfer-Encoding injection |
+| **H2.CRLF** | CRLF injection in HTTP/2 headers                    |
+| **H2.0**    | HTTP/2 request tunneling                            |
+| **h2c**     | Cleartext HTTP/2 upgrade smuggling                  |
 
 ### WebSocket
-| Variant | Description |
-|---------|-------------|
+
+| Variant        | Description                        |
+| -------------- | ---------------------------------- |
 | **WS.Version** | Sec-WebSocket-Version manipulation |
-| **WS.Upgrade** | Upgrade header smuggling |
+| **WS.Upgrade** | Upgrade header smuggling           |
 
 ### Advanced
-| Variant | Description |
-|---------|-------------|
+
+| Variant         | Description                               |
+| --------------- | ----------------------------------------- |
 | **Pause-Based** | Timeout exploitation via strategic pauses |
-| **Client-Side** | Browser-powered desync (CSD) |
+| **Client-Side** | Browser-powered desync (CSD)              |
 
 ## 📦 Installation
 
-### Quick Setup (Recommended)
+### Quick Start (Recommended)
 
 ```bash
 # Clone the repository
 git clone https://github.com/pentoshi007/http-smuggler.git
 cd http-smuggler
 
-# Run setup script (creates venv, installs dependencies)
 # Linux/macOS:
-./setup.sh
+./start.sh
 
 # Windows (PowerShell):
-.\setup.ps1
+.\start.ps1
+```
+
+The start script automatically:
+- Sets up virtual environment on first run
+- Installs all dependencies
+- Shows interactive menu or runs commands directly
+
+```bash
+# Run commands directly
+./start.sh detect https://example.com
+./start.sh scan https://target.com -o report.json
 ```
 
 ### Manual Installation
@@ -155,12 +169,12 @@ Options:
 
 ### Scan Modes
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **passive** | Protocol detection only | Reconnaissance |
-| **safe** | Timing detection only (single requests) | Production systems |
-| **normal** | Timing + Differential detection | Standard testing |
-| **aggressive** | Full testing with exploitation | Lab environments |
+| Mode           | Description                             | Use Case           |
+| -------------- | --------------------------------------- | ------------------ |
+| **passive**    | Protocol detection only                 | Reconnaissance     |
+| **safe**       | Timing detection only (single requests) | Production systems |
+| **normal**     | Timing + Differential detection         | Standard testing   |
+| **aggressive** | Full testing with exploitation          | Lab environments   |
 
 ## 📋 Example Output
 
@@ -200,12 +214,12 @@ Options:
 ### Console Output
 
 ```
-  _   _ _____ _____ ____    ____                              _           
- | | | |_   _|_   _|  _ \  / ___| _ __ ___  _   _  __ _  __ _| | ___ _ __ 
+  _   _ _____ _____ ____    ____                              _
+ | | | |_   _|_   _|  _ \  / ___| _ __ ___  _   _  __ _  __ _| | ___ _ __
  | |_| | | |   | | | |_) | \___ \| '_ ` _ \| | | |/ _` |/ _` | |/ _ \ '__|
- |  _  | | |   | | |  __/   ___) | | | | | | |_| | (_| | (_| | |  __/ |   
- |_| |_| |_|   |_| |_|     |____/|_| |_| |_|\__,_|\__, |\__, |_|\___|_|   
-                                                  |___/ |___/             
+ |  _  | | |   | | |  __/   ___) | | | | | | |_| | (_| | (_| | |  __/ |
+ |_| |_| |_|   |_| |_|     |____/|_| |_| |_|\__,_|\__, |\__, |_|\___|_|
+                                                  |___/ |___/
 
 Starting scan of https://vulnerable-site.com
 ────────────────────────────────────────────────────────────────

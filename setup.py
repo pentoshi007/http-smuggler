@@ -9,7 +9,7 @@ long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="http-smuggler",
-    version="1.0.0",
+    version="1.1.0",
     author="HTTP-Smuggler Contributors",
     author_email="security@example.com",
     description="Comprehensive HTTP Request Smuggling Detection & Exploitation Tool",

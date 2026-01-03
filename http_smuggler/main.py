@@ -53,7 +53,7 @@ def print_banner():
 
 
 @click.group()
-@click.version_option(version="1.0.0", prog_name="http-smuggler")
+@click.version_option(version="1.1.0", prog_name="http-smuggler")
 def cli():
     """HTTP-Smuggler: Advanced HTTP Request Smuggling Detection Tool
     
@@ -291,10 +291,10 @@ def scan(
 async def _run_scan_with_progress(config: ScanConfig, quiet: bool):
     """Run scan with progress display."""
     engine = SmugglerEngine(config)
-    
+
     if quiet:
         return await engine.scan()
-    
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -302,13 +302,52 @@ async def _run_scan_with_progress(config: ScanConfig, quiet: bool):
         TaskProgressColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("[cyan]Scanning...", total=100)
-        
-        # Run scan
-        result = await engine.scan()
-        
-        progress.update(task, completed=100)
-    
+        task = progress.add_task("[cyan]Initializing...", total=100)
+
+        # Create a task that monitors progress and updates the progress bar
+        async def update_progress():
+            last_phase = ""
+            while True:
+                p = engine.progress
+                # Calculate overall progress based on current phase
+                if p.phase == "protocol_detection":
+                    progress.update(task, completed=5, description="[cyan]Detecting protocols...")
+                elif p.phase == "crawling":
+                    progress.update(task, completed=15, description="[cyan]Crawling endpoints...")
+                elif p.phase == "testing":
+                    if p.total_endpoints > 0:
+                        # Scale testing phase from 20-95%
+                        endpoint_progress = (p.tested_endpoints / p.total_endpoints) * 75
+                        completed = 20 + endpoint_progress
+                        progress.update(
+                            task,
+                            completed=completed,
+                            description=f"[cyan]Testing endpoints ({p.tested_endpoints}/{p.total_endpoints})..."
+                        )
+                elif p.phase == "complete":
+                    progress.update(task, completed=100, description="[cyan]Scan complete")
+                    break
+
+                if last_phase != p.phase:
+                    last_phase = p.phase
+
+                await asyncio.sleep(0.1)
+
+        # Run scan and progress updater concurrently
+        scan_task = asyncio.create_task(engine.scan())
+        progress_task = asyncio.create_task(update_progress())
+
+        try:
+            result = await scan_task
+        finally:
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
+
+        progress.update(task, completed=100, description="[cyan]Scan complete")
+
     return result
 
 
@@ -437,7 +476,8 @@ def _parse_cookies(cookie_str: Optional[str]) -> dict:
 @cli.command()
 @click.argument("target")
 @click.option("--timeout", type=float, default=10.0)
-def detect(target: str, timeout: float):
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def detect(target: str, timeout: float, verbose: bool):
     """Detect protocols supported by TARGET.
     
     Performs protocol detection without active smuggling testing.
@@ -461,14 +501,21 @@ def detect(target: str, timeout: float):
         console.print(f"[red]Error:[/red] Invalid URL: {original_target}")
         sys.exit(1)
     
+    # Setup logging based on verbose flag
+    log_level = "DEBUG" if verbose else "INFO"
+    setup_logging(level=log_level, quiet=False)
+
     config = NetworkConfig(connect_timeout=timeout, read_timeout=timeout)
     detector = ProtocolDetector(config)
-    
+
     async def run():
         result = await detector.detect(target)
         return result
-    
+
     console.print(f"\n[cyan]Detecting protocols for:[/cyan] {target}\n")
+
+    if verbose:
+        console.print(f"[dim]Timeout: {timeout}s[/dim]")
     
     try:
         result = asyncio.run(run())

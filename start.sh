@@ -154,13 +154,17 @@ show_help() {
     echo -e "${CYAN}Usage:${NC}"
     echo -e "  ./start.sh                    # Show interactive menu"
     echo -e "  ./start.sh detect <URL>       # Detect protocols"
+    echo -e "  ./start.sh detect <URL> -v    # Detect protocols (verbose)"
     echo -e "  ./start.sh scan <URL>         # Full vulnerability scan"
+    echo -e "  ./start.sh scan <URL> -v      # Full scan (verbose output)"
     echo -e "  ./start.sh <any command>      # Pass directly to http-smuggler"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
     echo -e "  ./start.sh detect https://example.com"
+    echo -e "  ./start.sh detect https://example.com -v"
     echo -e "  ./start.sh scan https://target.com -o report.json"
     echo -e "  ./start.sh scan https://target.com --mode aggressive"
+    echo -e "  ./start.sh scan https://target.com -v"
     echo -e "  ./start.sh list-variants"
     echo ""
 }
@@ -186,8 +190,13 @@ show_menu() {
                 echo ""
                 read -p "Enter target URL: " target_url
                 if [ -n "$target_url" ]; then
+                    read -p "Verbose output? (y/N): " verbose
                     echo ""
-                    http-smuggler detect "$target_url"
+                    if [ "$verbose" = "y" ] || [ "$verbose" = "Y" ]; then
+                        http-smuggler detect "$target_url" -v
+                    else
+                        http-smuggler detect "$target_url"
+                    fi
                 fi
                 echo ""
                 echo -e "${YELLOW}Press Enter to continue...${NC}"
@@ -198,12 +207,16 @@ show_menu() {
                 read -p "Enter target URL: " target_url
                 if [ -n "$target_url" ]; then
                     read -p "Output file (leave empty for console): " output_file
+                    read -p "Verbose output? (y/N): " verbose
                     echo ""
+                    cmd_args="$target_url"
                     if [ -n "$output_file" ]; then
-                        http-smuggler scan "$target_url" -o "$output_file"
-                    else
-                        http-smuggler scan "$target_url"
+                        cmd_args="$cmd_args -o \"$output_file\""
                     fi
+                    if [ "$verbose" = "y" ] || [ "$verbose" = "Y" ]; then
+                        cmd_args="$cmd_args -v"
+                    fi
+                    eval "http-smuggler scan $cmd_args"
                 fi
                 echo ""
                 echo -e "${YELLOW}Press Enter to continue...${NC}"

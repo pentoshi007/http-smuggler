@@ -192,13 +192,15 @@ class SmugglerEngine:
         if self.config.skip_crawl or self.config.target_endpoints:
             endpoints = self._get_manual_endpoints(target_url)
         else:
+            self._progress.phase = "crawling"
             self.logger.info("Crawling domain for endpoints...")
             endpoints = await self._discover_endpoints(target_url)
-        
+
         self._progress.total_endpoints = len(endpoints)
         self.logger.info(f"Found {len(endpoints)} endpoints to test")
-        
+
         # Phase 3-5: Test Each Endpoint
+        self._progress.phase = "testing"
         vulnerabilities = []
         
         for endpoint in endpoints:
@@ -220,7 +222,8 @@ class SmugglerEngine:
         
         scan_end = datetime.utcnow()
         duration = (scan_end - scan_start).total_seconds()
-        
+
+        self._progress.phase = "complete"
         self.logger.scan_complete(duration)
         
         return ScanResult(

@@ -83,6 +83,10 @@ The start script automatically:
 # Run commands directly
 ./start.sh detect https://example.com
 ./start.sh scan https://target.com -o report.json
+# For verbose output
+./start.sh detect https://example.com -v
+./start.sh scan https://target.com -v -o report.json
+
 ```
 
 ### Manual Installation

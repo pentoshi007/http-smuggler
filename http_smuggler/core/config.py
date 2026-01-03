@@ -69,7 +69,7 @@ class CrawlConfig:
     include_patterns: List[str] = field(default_factory=list)
     exclude_patterns: List[str] = field(
         default_factory=lambda: [
-            r"\.(?:css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot)$",
+            r"\.(?:css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|pdf|doc|docx|xls|xlsx|zip|tar|gz)$",
             r"/static/",
             r"/assets/",
             r"/(?:logout|signout)",

@@ -10,7 +10,9 @@ The attacker sends a request where:
 - Leftover data becomes prefix of next request
 """
 
-from typing import List
+import re
+from ipaddress import ip_address, IPv6Address
+from typing import List, Tuple
 from urllib.parse import urlparse
 
 from http_smuggler.core.models import (
@@ -25,6 +27,47 @@ from http_smuggler.payloads.generator import (
 )
 
 
+def validate_hostname(hostname: str) -> str:
+    """Validate hostname for header injection attacks.
+
+    Prevents CRLF injection, null bytes, and other dangerous characters
+    in hostnames that could corrupt HTTP headers.
+
+    Args:
+        hostname: The hostname to validate
+
+    Returns:
+        Validated hostname (with IPv6 bracketed if needed)
+
+    Raises:
+        ValueError: If hostname contains dangerous characters
+    """
+    if not hostname:
+        raise ValueError("Empty hostname")
+
+    # Check for CRLF injection and null bytes
+    if '\r' in hostname or '\n' in hostname or '\x00' in hostname:
+        raise ValueError(f"Invalid characters in hostname: {repr(hostname)}")
+
+    # Try to parse as IP address
+    try:
+        addr = ip_address(hostname)
+        if isinstance(addr, IPv6Address):
+            return f"[{hostname}]"  # Wrap IPv6 in brackets
+        return hostname
+    except ValueError:
+        pass  # Not an IP address, validate as domain
+
+    # Validate domain name format (alphanumeric, hyphens, dots)
+    # Allow underscores for compatibility with some internal domains
+    if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-_\.]*[a-zA-Z0-9])?$', hostname):
+        # Check if it's a single character valid hostname
+        if not (len(hostname) == 1 and hostname.isalnum()):
+            raise ValueError(f"Invalid hostname format: {hostname}")
+
+    return hostname
+
+
 class CLTEPayloadGenerator(PayloadGenerator):
     """Generator for CL.TE smuggling payloads."""
     
@@ -36,15 +79,38 @@ class CLTEPayloadGenerator(PayloadGenerator):
     def name(self) -> str:
         return "CL.TE Payload Generator"
     
-    def _extract_host_path(self, endpoint: Endpoint) -> tuple:
-        """Extract host and path from endpoint."""
+    def _extract_host_path(self, endpoint: Endpoint) -> Tuple[str, str]:
+        """Extract and validate host and path from endpoint.
+
+        Validates hostname to prevent CRLF injection and other header attacks.
+
+        Args:
+            endpoint: The endpoint to extract host/path from
+
+        Returns:
+            Tuple of (validated_host, path)
+
+        Raises:
+            ValueError: If hostname contains invalid/dangerous characters
+        """
         parsed = urlparse(endpoint.url)
-        host = parsed.hostname or ""
+        hostname = parsed.hostname or ""
+
+        # Validate hostname for injection attacks
+        hostname = validate_hostname(hostname)
+
+        # Add port if non-standard
         if parsed.port and parsed.port not in (80, 443):
-            host = f"{host}:{parsed.port}"
+            if not (1 <= parsed.port <= 65535):
+                raise ValueError(f"Invalid port number: {parsed.port}")
+            host = f"{hostname}:{parsed.port}"
+        else:
+            host = hostname
+
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
+
         return host, path
     
     def generate_timing_payloads(self, endpoint: Endpoint) -> List[Payload]:

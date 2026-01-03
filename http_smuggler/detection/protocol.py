@@ -16,6 +16,7 @@ import ssl
 import socket
 import asyncio
 import struct
+import logging
 from typing import Optional, List, Dict, Any, Tuple, Set
 from dataclasses import dataclass, field
 
@@ -29,6 +30,8 @@ from http_smuggler.core.exceptions import (
     ALPNNegotiationError,
 )
 from http_smuggler.utils.helpers import parse_url, ParsedURL
+
+logger = logging.getLogger(__name__)
 
 
 # HTTP/2 constants
@@ -117,6 +120,45 @@ class ProtocolDetector:
 
     def __init__(self, config: Optional[NetworkConfig] = None):
         self.config = config or NetworkConfig()
+        self._ssl_warning_logged = False
+
+    def _create_ssl_context(
+        self,
+        alpn_protocols: Optional[List[str]] = None,
+        require_tls_1_2: bool = True,
+    ) -> ssl.SSLContext:
+        """Create SSL context respecting config.verify_ssl setting.
+
+        Args:
+            alpn_protocols: ALPN protocols to set
+            require_tls_1_2: Whether to require TLS 1.2+
+
+        Returns:
+            Configured SSLContext
+        """
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+        if self.config.verify_ssl:
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_default_certs()
+        else:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            # Log warning once per detector instance
+            if not self._ssl_warning_logged:
+                logger.warning(
+                    "TLS certificate verification DISABLED - use only for testing"
+                )
+                self._ssl_warning_logged = True
+
+        if require_tls_1_2:
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+
+        if alpn_protocols:
+            context.set_alpn_protocols(alpn_protocols)
+
+        return context
 
     async def detect(
         self,
@@ -290,14 +332,7 @@ class ProtocolDetector:
         Returns:
             Tuple of (selected_protocol, tls_version)
         """
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        
-        # Set minimum TLS version to ensure ALPN support
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        
-        context.set_alpn_protocols(protocols)
+        context = self._create_ssl_context(alpn_protocols=protocols, require_tls_1_2=True)
 
         try:
             reader, writer = await asyncio.wait_for(
@@ -341,13 +376,10 @@ class ProtocolDetector:
         Returns:
             True if server responds with valid HTTP/2 SETTINGS frame
         """
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        
         # Offer h2 via ALPN but still test even if not negotiated
-        context.set_alpn_protocols(["h2", "http/1.1"])
+        context = self._create_ssl_context(
+            alpn_protocols=["h2", "http/1.1"], require_tls_1_2=True
+        )
 
         try:
             reader, writer = await asyncio.wait_for(
@@ -400,11 +432,7 @@ class ProtocolDetector:
         Returns:
             True if HTTP/2 handshake completes successfully
         """
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.set_alpn_protocols(["h2"])
+        context = self._create_ssl_context(alpn_protocols=["h2"], require_tls_1_2=True)
 
         try:
             reader, writer = await asyncio.wait_for(
@@ -503,10 +531,8 @@ class ProtocolDetector:
         # NPN is largely deprecated and not well supported in modern Python
         # We'll try to detect it via TLS extension
         try:
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            
+            context = self._create_ssl_context(require_tls_1_2=False)
+
             # Check if NPN is available (deprecated in Python 3.10+)
             if hasattr(context, 'set_npn_protocols'):
                 context.set_npn_protocols(["h2", "http/1.1"])
@@ -552,9 +578,7 @@ class ProtocolDetector:
 
         try:
             if parsed.use_ssl:
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                context = self._create_ssl_context(require_tls_1_2=False)
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(parsed.host, parsed.port, ssl=context),
                     timeout=self.config.connect_timeout,
@@ -680,9 +704,7 @@ class ProtocolDetector:
 
         try:
             if parsed.use_ssl:
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                context = self._create_ssl_context(require_tls_1_2=False)
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(parsed.host, parsed.port, ssl=context),
                     timeout=self.config.connect_timeout,
@@ -735,9 +757,7 @@ class ProtocolDetector:
 
         try:
             if parsed.use_ssl:
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                context = self._create_ssl_context(require_tls_1_2=False)
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(parsed.host, parsed.port, ssl=context),
                     timeout=self.config.connect_timeout,

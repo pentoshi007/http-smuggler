@@ -81,7 +81,7 @@ class TimingDetector:
         self.network = network_config or NetworkConfig()
         
         # Detection thresholds
-        self.baseline_requests = 3  # Number of requests for baseline
+        self.baseline_requests = 5  # Number of requests for baseline (increased for statistical validity)
         self.timeout_threshold = 5.0  # Minimum timeout to consider (seconds)
         self.confidence_threshold = 0.7  # Minimum confidence for positive detection
     

@@ -10,7 +10,7 @@ The attacker sends a request where:
 - Remaining data (after CL bytes) becomes prefix of next request
 """
 
-from typing import List
+from typing import List, Tuple
 from urllib.parse import urlparse
 
 from http_smuggler.core.models import (
@@ -23,6 +23,7 @@ from http_smuggler.payloads.generator import (
     PayloadGenerator,
     PayloadCategory,
 )
+from http_smuggler.payloads.classic.cl_te import validate_hostname
 
 
 class TECLPayloadGenerator(PayloadGenerator):
@@ -36,15 +37,38 @@ class TECLPayloadGenerator(PayloadGenerator):
     def name(self) -> str:
         return "TE.CL Payload Generator"
     
-    def _extract_host_path(self, endpoint: Endpoint) -> tuple:
-        """Extract host and path from endpoint."""
+    def _extract_host_path(self, endpoint: Endpoint) -> Tuple[str, str]:
+        """Extract and validate host and path from endpoint.
+
+        Validates hostname to prevent CRLF injection and other header attacks.
+
+        Args:
+            endpoint: The endpoint to extract host/path from
+
+        Returns:
+            Tuple of (validated_host, path)
+
+        Raises:
+            ValueError: If hostname contains invalid/dangerous characters
+        """
         parsed = urlparse(endpoint.url)
-        host = parsed.hostname or ""
+        hostname = parsed.hostname or ""
+
+        # Validate hostname for injection attacks
+        hostname = validate_hostname(hostname)
+
+        # Add port if non-standard
         if parsed.port and parsed.port not in (80, 443):
-            host = f"{host}:{parsed.port}"
+            if not (1 <= parsed.port <= 65535):
+                raise ValueError(f"Invalid port number: {parsed.port}")
+            host = f"{hostname}:{parsed.port}"
+        else:
+            host = hostname
+
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
+
         return host, path
     
     def generate_timing_payloads(self, endpoint: Endpoint) -> List[Payload]:

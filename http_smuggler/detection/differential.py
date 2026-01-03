@@ -115,8 +115,12 @@ class DifferentialDetector:
                     receive_timeout=self.safety.differential_detection_timeout,
                 )
                 
-                # Small delay to allow smuggled data to be processed
-                await asyncio.sleep(0.1)
+                # Adaptive delay based on baseline response time
+                # This ensures we wait long enough for smuggled data to be processed
+                # while not waiting arbitrarily when baseline is fast
+                baseline_time = baseline_response.response_time if baseline_response else 0.1
+                adaptive_delay = max(0.1, min(baseline_time * 2, 2.0))  # Between 0.1s and 2s
+                await asyncio.sleep(adaptive_delay)
                 
                 # Step 2: Send victim request on SAME connection
                 victim_response = await client.send_and_receive(

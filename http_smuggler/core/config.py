@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Set
 from enum import Enum
+from urllib.parse import urlparse
 
 from .models import SmugglingVariant, HttpVersion
 
@@ -333,12 +334,44 @@ class ScanConfig:
 
         if not self.target_url:
             errors.append("target_url is required")
+        else:
+            # URL format validation
+            try:
+                parsed = urlparse(self.target_url)
+                
+                # Check scheme
+                if parsed.scheme and parsed.scheme not in ('http', 'https'):
+                    errors.append(f"Unsupported URL scheme: {parsed.scheme} (must be http or https)")
+                
+                # Check hostname exists
+                if not parsed.hostname:
+                    errors.append("URL must contain a valid hostname")
+                else:
+                    hostname = parsed.hostname
+                    
+                    # Check for dangerous characters in hostname (CRLF injection)
+                    if '\r' in hostname or '\n' in hostname or '\x00' in hostname:
+                        errors.append(f"Invalid characters in hostname: {repr(hostname)}")
+                    
+                    # Validate port if specified
+                    if parsed.port is not None:
+                        if not (1 <= parsed.port <= 65535):
+                            errors.append(f"Invalid port number: {parsed.port} (must be 1-65535)")
+                            
+            except Exception as e:
+                errors.append(f"Invalid target URL format: {e}")
 
         if self.force_http2 and self.force_http1:
             errors.append("Cannot force both HTTP/1.1 and HTTP/2")
 
         if self.safety.requests_per_second <= 0:
             errors.append("requests_per_second must be positive")
+
+        # Rate limit sanity checks
+        if self.safety.requests_per_second < 0.1:
+            errors.append("requests_per_second too low (minimum 0.1)")
+        if self.safety.requests_per_second > 100:
+            errors.append("requests_per_second too high (maximum 100)")
 
         if self.safety.max_concurrent_tests <= 0:
             errors.append("max_concurrent_tests must be positive")

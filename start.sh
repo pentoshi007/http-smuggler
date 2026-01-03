@@ -246,7 +246,11 @@ show_menu() {
             6)
                 echo -e "${GREEN}Environment activated. Type 'exit' to return to menu.${NC}"
                 echo -e "${BLUE}Try: http-smuggler --help${NC}"
-                $SHELL
+                # Ensure venv environment is exported for the subshell
+                export VIRTUAL_ENV="$PWD/venv"
+                export PATH="$PWD/venv/bin:$PATH"
+                # Use || true to prevent set -e from exiting on non-zero shell exit
+                $SHELL || true
                 ;;
             q|Q)
                 echo ""

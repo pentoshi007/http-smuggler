@@ -38,29 +38,42 @@ class BaselineResult:
     
     def is_timeout(self, response_time: float, threshold_multiplier: float = 3.0) -> bool:
         """Check if a response time indicates a timeout.
-        
+
         Args:
             response_time: Measured response time
             threshold_multiplier: How many standard deviations above avg
-        
+
         Returns:
             True if response time indicates timeout
         """
-        # Use multiple criteria
-        # 1. Much longer than average
-        if response_time > self.avg_time * 5:
+        # Use multiple criteria with more lenient thresholds for better detection
+
+        # 1. Absolute timeout threshold - if response takes 3+ seconds AND is much slower than baseline
+        # This catches obvious timeouts even on fast networks
+        if response_time >= 3.0 and response_time > self.max_time * 1.5:
             return True
-        
-        # 2. More than threshold_multiplier std devs above mean
+
+        # 2. Significant slowdown compared to average (3x instead of 5x for better sensitivity)
+        # On fast networks where baseline is <100ms, a 300ms+ response is suspicious
+        if response_time > self.avg_time * 3 and response_time >= 0.5:
+            return True
+
+        # 3. Statistical outlier detection using z-score
+        # More than threshold_multiplier std devs above mean indicates anomaly
         if self.std_dev > 0:
             z_score = (response_time - self.avg_time) / self.std_dev
-            if z_score > threshold_multiplier:
+            if z_score > threshold_multiplier and response_time >= 0.3:
                 return True
-        
-        # 3. Absolute timeout threshold (5+ seconds)
-        if response_time >= 5.0 and response_time > self.max_time * 2:
+
+        # 4. Absolute delay threshold for slow networks
+        # If baseline is already slow (>1s), look for additional 2s+ delay
+        if self.avg_time > 1.0 and response_time > self.avg_time + 2.0:
             return True
-        
+
+        # 5. Very long response regardless of baseline (backend clearly waiting)
+        if response_time >= 8.0:
+            return True
+
         return False
 
 
@@ -79,11 +92,12 @@ class TimingDetector:
     ):
         self.safety = safety_config or SafetyConfig()
         self.network = network_config or NetworkConfig()
-        
-        # Detection thresholds
-        self.baseline_requests = 5  # Number of requests for baseline (increased for statistical validity)
-        self.timeout_threshold = 5.0  # Minimum timeout to consider (seconds)
-        self.confidence_threshold = 0.7  # Minimum confidence for positive detection
+
+        # Detection thresholds - tuned for better TryHackMe/real-world detection
+        self.baseline_requests = 10  # Increased for statistical validity
+        self.timeout_threshold = 3.0  # Lowered from 5.0 - catch faster timeouts
+        self.confidence_threshold = 0.6  # Lowered from 0.7 - more sensitive detection
+        self.confirmation_attempts = 2  # Retry suspicious payloads to confirm
     
     async def measure_baseline(
         self,
@@ -252,51 +266,57 @@ class TimingDetector:
         connection_timed_out: bool,
     ) -> float:
         """Calculate confidence score for timing detection.
-        
+
         Args:
             elapsed: Response time in seconds
             baseline: Baseline timing data
             is_timeout: Whether this exceeds baseline threshold
             is_absolute_timeout: Whether this exceeds absolute threshold
             connection_timed_out: Whether connection actually timed out
-        
+
         Returns:
             Confidence score from 0.0 to 1.0
         """
         confidence = 0.0
-        
+
         # Connection timeout is strong indicator
         if connection_timed_out:
+            confidence = 0.95
+
+        # Very long response (8s+) is almost certainly a timeout
+        elif elapsed >= 8.0:
             confidence = 0.9
-        
-        # Absolute timeout with clean connection is good indicator
+
+        # Absolute timeout (3s+) with significant delay vs baseline
         elif is_absolute_timeout and elapsed >= self.timeout_threshold * 2:
             confidence = 0.85
-        
+
         elif is_absolute_timeout:
             confidence = 0.75
-        
+
         # Relative timeout based on baseline
         elif is_timeout:
             # Calculate how many times longer than average
             ratio = elapsed / baseline.avg_time if baseline.avg_time > 0 else 1
-            
-            if ratio >= 10:
-                confidence = 0.8
+
+            if ratio >= 8:
+                confidence = 0.85
             elif ratio >= 5:
-                confidence = 0.7
+                confidence = 0.75
             elif ratio >= 3:
-                confidence = 0.6
+                confidence = 0.65
+            elif ratio >= 2:
+                confidence = 0.55
             else:
-                confidence = 0.5
-        
-        # Minor slowdown
-        elif elapsed > baseline.avg_time * 2:
+                confidence = 0.45
+
+        # Notable slowdown but not timeout
+        elif elapsed > baseline.avg_time * 1.5 and elapsed >= 0.5:
             confidence = 0.4
-        
+
         else:
             confidence = 0.1
-        
+
         return min(confidence, 1.0)
     
     def _build_evidence(

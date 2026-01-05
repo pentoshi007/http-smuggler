@@ -19,6 +19,8 @@ A powerful, automated security tool for detecting all known HTTP request smuggli
 - 🛡️ **Safety Modes** - Passive, Safe, Normal, and Aggressive scan modes
 - 🎭 **Exploitation** - Optional confirmation with actual exploitation attempts
 - 📊 **Multi-Format Reports** - JSON, Markdown, and Text output
+- 🧠 **Smart Mode** - Auto-starts the right callback listeners based on vulnerability type
+- 🎧 **Built-in Listeners** - Capture server, Fake 101 server, and Loot server for exploitation
 
 ## 🚀 Supported Variants
 
@@ -28,7 +30,7 @@ A powerful, automated security tool for detecting all known HTTP request smuggli
 | --------- | ------------------------------------------------------------ |
 | **CL.TE** | Frontend uses Content-Length, Backend uses Transfer-Encoding |
 | **TE.CL** | Frontend uses Transfer-Encoding, Backend uses Content-Length |
-| **TE.TE** | Transfer-Encoding obfuscation (56 mutations)                 |
+| **TE.TE** | Transfer-Encoding obfuscation (66 mutations)                 |
 | **CL.CL** | Duplicate Content-Length headers                             |
 | **CL.0**  | Backend ignores Content-Length                               |
 | **0.CL**  | Frontend ignores body, Backend reads CL                      |
@@ -117,7 +119,7 @@ http-smuggler scan https://target.com
 # Save report as JSON
 http-smuggler scan https://target.com -o report.json
 
-# Aggressive mode with exploitation
+# Aggressive mode with exploitation (SMART MODE - auto-starts listeners)
 http-smuggler scan https://target.com --mode aggressive --exploit
 
 # Protocol detection only
@@ -128,6 +130,9 @@ http-smuggler scan https://target.com --variants CL.TE,TE.CL,H2.CL
 
 # Skip crawling, test single endpoint
 http-smuggler scan https://target.com/api --no-crawl
+
+# Disable auto-listeners (manual listener mode)
+http-smuggler scan https://target.com --mode aggressive --exploit --no-auto-listeners
 ```
 
 ## 📖 Usage
@@ -136,9 +141,10 @@ http-smuggler scan https://target.com/api --no-crawl
 Usage: http-smuggler [OPTIONS] COMMAND [ARGS]...
 
 Commands:
-  scan             Scan target for HTTP request smuggling vulnerabilities
-  detect           Protocol detection only (no smuggling tests)
-  list-variants    List all supported smuggling variants
+  scan              Scan target for HTTP request smuggling vulnerabilities
+  detect            Protocol detection only (no smuggling tests)
+  listener          Start a callback listener for exploitation
+  list-variants     List all supported smuggling variants
   list-obfuscations List all Transfer-Encoding obfuscations
 
 Global Options:
@@ -159,6 +165,8 @@ Options:
                               Output format (default: json)
   --crawl / --no-crawl        Enable/disable crawling (default: enabled)
   --exploit / --no-exploit    Enable exploitation (default: disabled)
+  --auto-listeners / --no-auto-listeners
+                              Auto-start callback listeners (default: enabled)
   --depth INTEGER             Maximum crawl depth (default: 3)
   --max-endpoints INTEGER     Maximum endpoints to test (default: 100)
   --variants TEXT             Comma-separated variants to test
@@ -180,6 +188,44 @@ Options:
 | **safe**       | Timing detection only (single requests) | Production systems |
 | **normal**     | Timing + Differential detection         | Standard testing   |
 | **aggressive** | Full testing with exploitation          | Lab environments   |
+
+### Smart Mode (Auto-Listeners)
+
+When running in aggressive mode with `--exploit`, the tool automatically starts the appropriate callback listeners based on vulnerability type:
+
+| Vulnerability Type | Auto-Started Listener | Purpose |
+| ------------------ | --------------------- | ------- |
+| CL.TE, TE.CL, TE.TE, H2.CL, H2.TE | Capture Server (port 8888) | Session hijacking |
+| WS.VERSION, WS.Upgrade | Fake 101 Server (port 9999) | WebSocket SSRF |
+| Client-Side Desync | Loot Server (port 8080) | Cookie exfiltration |
+
+**No manual intervention required** - the tool figures out what listener is needed and starts it automatically.
+
+### Listener Command
+
+For manual testing or advanced usage, you can start listeners independently:
+
+```bash
+# Start capture server for session hijacking
+http-smuggler listener --type capture --port 8888
+
+# Start Fake 101 server for WebSocket SSRF attacks
+http-smuggler listener --type fake101 --port 9999
+
+# Start loot server for Client-Side Desync attacks
+http-smuggler listener --type loot --port 8080
+```
+
+Listener options:
+```
+http-smuggler listener [OPTIONS]
+
+Options:
+  -t, --type [capture|fake101|loot]  Listener type (default: capture)
+  -p, --port INTEGER                  Port to listen on (default: 8888)
+  -H, --host TEXT                     Host to bind to (default: 0.0.0.0)
+  --timeout FLOAT                     Server timeout in seconds (default: 300)
+```
 
 ## 📋 Example Output
 
@@ -250,17 +296,35 @@ Scan complete in 342.15s | Endpoints: 45 | Vulnerabilities: 1
 ```
 http_smuggler/
 ├── core/           # Configuration, models, exceptions, engine
-├── network/        # Raw socket and HTTP/2 clients
+├── network/        # Raw socket, HTTP/2 clients, callback servers
 ├── detection/      # Protocol, timing, differential detectors
 ├── payloads/       # Payload generators (classic, http2, websocket, advanced)
 ├── crawler/        # Async domain crawler
-├── exploits/       # Exploitation confirmation
+├── exploits/       # Exploitation runners, auto-listener management
 ├── analysis/       # Report generation
 ├── utils/          # Logging, helpers
 └── main.py         # CLI interface
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+
+## 🎓 TryHackMe Compatibility
+
+This tool is tested and compatible with TryHackMe HTTP Smuggling labs:
+
+| Room | Variants Covered | Notes |
+| ---- | ---------------- | ----- |
+| HTTP Request Smuggling | CL.TE, TE.CL | Classic smuggling basics |
+| HTTP/2 Request Smuggling | H2.CL, H2.TE, H2.CRLF | HTTP/2 downgrade attacks |
+| WebSocket Request Smuggling | WS.VERSION | Version manipulation + SSRF |
+| Client-Side Desync | CSD | Browser-powered attacks |
+
+For TryHackMe labs, use aggressive mode:
+```bash
+http-smuggler scan http://TARGET_IP --mode aggressive --exploit
+```
+
+The tool will automatically start the appropriate listeners for capturing sessions or performing SSRF.
 
 ## 🧪 Testing
 

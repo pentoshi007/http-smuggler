@@ -98,7 +98,15 @@ class SmugglerEngine:
         self.timing_detector = TimingDetector(config.safety, config.network)
         self.differential_detector = DifferentialDetector(config.safety, config.network)
         self.crawler = DomainCrawler(config.crawl)
-        self.exploit_runner = ExploitRunner(config.exploit, config.safety, config.network)
+
+        # Initialize exploit runner with auto-listeners enabled in aggressive mode
+        auto_listeners = config.mode == ScanMode.AGGRESSIVE and config.exploit.enabled
+        self.exploit_runner = ExploitRunner(
+            config.exploit,
+            config.safety,
+            config.network,
+            auto_listeners=auto_listeners,
+        )
         self.reporter = Reporter(config.report)
         
         # Initialize payload generators
@@ -225,7 +233,16 @@ class SmugglerEngine:
 
         self._progress.phase = "complete"
         self.logger.scan_complete(duration)
-        
+
+        # Cleanup auto-listeners
+        if self.exploit_runner.auto_listeners:
+            listener_info = self.exploit_runner.get_listener_info()
+            if listener_info.get("active"):
+                self.logger.info(
+                    f"Auto-listeners used: {', '.join(listener_info['active'])}"
+                )
+            self.exploit_runner.cleanup_listeners()
+
         return ScanResult(
             target=target_url,
             scan_start=scan_start,
@@ -382,15 +399,36 @@ class SmugglerEngine:
         host: str,
         port: int,
         use_ssl: bool,
+        max_retries: int = 2,
     ) -> Optional[DetectionResult]:
-        """Confirm vulnerability with differential detection."""
-        try:
-            return await self.differential_detector.detect(
-                payload, host, port, use_ssl
-            )
-        except Exception as e:
-            self.logger.debug(f"Differential detection failed: {e}")
-            return None
+        """Confirm vulnerability with differential detection.
+
+        Includes retry logic for transient network failures.
+        """
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                result = await self.differential_detector.detect(
+                    payload, host, port, use_ssl
+                )
+                if result and result.vulnerable:
+                    return result
+                # If not vulnerable on first try, try again (could be timing issue)
+                if attempt == 0 and result and not result.vulnerable:
+                    await asyncio.sleep(0.5)  # Brief delay before retry
+                    continue
+                return result
+            except Exception as e:
+                last_error = e
+                self.logger.debug(f"Differential detection attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    # Exponential backoff
+                    await asyncio.sleep(1.0 * (attempt + 1))
+
+        if last_error:
+            self.logger.debug(f"All differential detection attempts failed: {last_error}")
+        return None
     
     async def _build_vulnerability(
         self,

@@ -93,6 +93,11 @@ def cli():
     help="Enable exploitation confirmation (aggressive mode)"
 )
 @click.option(
+    "--auto-listeners/--no-auto-listeners",
+    default=True,
+    help="Auto-start callback listeners for exploitation (capture server, fake101, loot)"
+)
+@click.option(
     "--depth",
     type=int,
     default=3,
@@ -159,6 +164,7 @@ def scan(
     format: str,
     crawl: bool,
     exploit: bool,
+    auto_listeners: bool,
     depth: int,
     max_endpoints: int,
     variants: Optional[str],
@@ -172,17 +178,27 @@ def scan(
     classic_only: bool,
 ):
     """Scan TARGET for HTTP request smuggling vulnerabilities.
-    
+
+    SMART MODE: In aggressive mode with --exploit, the tool automatically starts
+    the appropriate callback listeners based on vulnerability type:
+
+    \b
+    - CL.TE/TE.CL/TE.TE → Capture server for session hijacking (port 8888)
+    - WS.VERSION → Fake 101 server for WebSocket SSRF (port 9999)
+    - CLIENT_SIDE → Loot server for cookie exfiltration (port 8080)
+
+    No manual intervention required - the tool has the brain to do it!
+
     TARGET should be a full URL (e.g., https://example.com)
-    
+
     Examples:
-    
+
       http-smuggler scan https://example.com
-      
+
       http-smuggler scan https://example.com --mode aggressive --exploit
-      
+
       http-smuggler scan https://example.com --no-crawl -o report.json
-      
+
       http-smuggler scan https://example.com --variants CL.TE,TE.CL
     """
     if not quiet:
@@ -245,7 +261,18 @@ def scan(
             output_file=output,
         ),
     )
-    
+
+    # Show smart mode info
+    if not quiet and mode == "aggressive" and (exploit or config.exploit.enabled) and auto_listeners:
+        from http_smuggler.network.callback_server import get_local_ip
+        local_ip = get_local_ip()
+        console.print("\n[bold cyan]SMART MODE ENABLED[/bold cyan]")
+        console.print("[dim]Auto-listeners will start automatically when vulnerabilities are found:[/dim]")
+        console.print(f"  [green]•[/green] Capture server: http://{local_ip}:8888/")
+        console.print(f"  [green]•[/green] Fake 101 server: http://{local_ip}:9999/")
+        console.print(f"  [green]•[/green] Loot server: http://{local_ip}:8080/")
+        console.print()
+
     # Run scan
     try:
         result = asyncio.run(_run_scan_with_progress(config, quiet))
@@ -679,6 +706,140 @@ def list_obfuscations():
     console.print(table)
     
     console.print("\n[dim]Use --verbose with scan to see individual obfuscations tested[/dim]")
+
+
+@cli.command()
+@click.option(
+    "--type", "-t",
+    type=click.Choice(["capture", "fake101", "loot"]),
+    default="capture",
+    help="Listener type: capture (request capture), fake101 (WebSocket SSRF), loot (cookie/token capture)"
+)
+@click.option(
+    "--port", "-p",
+    type=int,
+    default=8888,
+    help="Port to listen on"
+)
+@click.option(
+    "--host", "-H",
+    default="0.0.0.0",
+    help="Host to bind to"
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=300.0,
+    help="Server timeout in seconds (default: 5 minutes)"
+)
+def listener(type: str, port: int, host: str, timeout: float):
+    """Start a callback listener for exploitation.
+
+    Useful for TryHackMe labs and real-world testing where you need
+    an external server to receive callbacks.
+
+    Examples:
+
+        # Start capture server for session hijacking
+        http-smuggler listener --type capture --port 8888
+
+        # Start Fake 101 server for WebSocket SSRF (Method B)
+        http-smuggler listener --type fake101 --port 9999
+
+        # Start loot server for Client-Side Desync attacks
+        http-smuggler listener --type loot --port 8080
+    """
+    print_banner()
+
+    from http_smuggler.network.callback_server import (
+        CallbackServer,
+        CallbackServerConfig,
+        get_local_ip,
+    )
+
+    local_ip = get_local_ip()
+
+    config = CallbackServerConfig(
+        host=host,
+        port=port,
+        timeout=timeout,
+    )
+
+    server = CallbackServer(config)
+
+    console.print(f"\n[cyan]Starting {type} listener...[/cyan]\n")
+
+    if type == "capture":
+        console.print("[bold]Request Capture Server[/bold]")
+        console.print("Captures incoming HTTP requests for session hijacking attacks.\n")
+
+        def on_capture(req):
+            console.print(f"[green]✓ Captured:[/green] {req.method} {req.path} from {req.source_ip}")
+            console.print(f"  Headers: {dict(list(req.headers.items())[:3])}...")
+            if req.body:
+                console.print(f"  Body: {req.body[:100]}...")
+
+        if not server.start_capture_server(on_capture=on_capture):
+            console.print("[red]Failed to start server![/red]")
+            sys.exit(1)
+
+    elif type == "fake101":
+        console.print("[bold]Fake 101 Server (WebSocket SSRF)[/bold]")
+        console.print("Returns 101 Switching Protocols for WebSocket SSRF attacks.\n")
+        console.print("[dim]Use this when the target has an SSRF endpoint that you can")
+        console.print("point to your server to establish a fake WebSocket tunnel.[/dim]\n")
+
+        if not server.start_fake101_server():
+            console.print("[red]Failed to start server![/red]")
+            sys.exit(1)
+
+    elif type == "loot":
+        console.print("[bold]Loot Collection Server[/bold]")
+        console.print("Captures exfiltrated cookies and tokens from CSD attacks.\n")
+
+        if not server.start_loot_server():
+            console.print("[red]Failed to start server![/red]")
+            sys.exit(1)
+
+    console.print(f"[green]✓ Listening on {host}:{port}[/green]")
+    console.print(f"[cyan]External URL:[/cyan] http://{local_ip}:{port}/")
+    console.print("\n[dim]Press Ctrl+C to stop[/dim]\n")
+
+    try:
+        import time
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(1)
+
+            # Show captured requests for capture type
+            if type == "capture":
+                captures = server.get_captures()
+                if captures:
+                    console.print(f"[dim]Total captured: {len(captures)}[/dim]", end="\r")
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping listener...[/yellow]")
+    finally:
+        server.stop()
+
+    # Print summary
+    if type == "capture":
+        captures = server.get_captures()
+        if captures:
+            console.print(f"\n[green]Captured {len(captures)} request(s):[/green]")
+            for i, cap in enumerate(captures[:10]):
+                console.print(f"  {i+1}. {cap.method} {cap.path} from {cap.source_ip}")
+        else:
+            console.print("\n[yellow]No requests captured[/yellow]")
+
+    elif type == "loot":
+        loot = server.get_loot()
+        if loot:
+            console.print(f"\n[green]Captured {len(loot)} loot item(s):[/green]")
+            for i, item in enumerate(loot[:10]):
+                console.print(f"  {i+1}. {item.get('path', 'unknown')}")
+                if "cookie" in str(item.get("params", {})).lower():
+                    console.print(f"     [red]COOKIE FOUND![/red]")
 
 
 # Import ReportConfig for the config

@@ -68,9 +68,9 @@ class DifferentialDetector:
     ):
         self.safety = safety_config or SafetyConfig()
         self.network = network_config or NetworkConfig()
-        
-        # Detection settings
-        self.confidence_threshold = 0.7
+
+        # Detection settings - lowered threshold for better detection
+        self.confidence_threshold = 0.6  # Lowered from 0.7 for more sensitive detection
     
     async def detect(
         self,
@@ -114,14 +114,41 @@ class DifferentialDetector:
                     smuggle_payload.raw_request,
                     receive_timeout=self.safety.differential_detection_timeout,
                 )
-                
-                # Adaptive delay based on baseline response time
-                # This ensures we wait long enough for smuggled data to be processed
-                # while not waiting arbitrarily when baseline is fast
-                baseline_time = baseline_response.response_time if baseline_response else 0.1
-                adaptive_delay = max(0.1, min(baseline_time * 2, 2.0))  # Between 0.1s and 2s
+
+                # CRITICAL FIX: Use longer adaptive delay based on baseline response time
+                # The backend needs time to process the smuggled request before we send victim
+                # TryHackMe labs and real servers may need 500ms-5s to process
+                baseline_time = baseline_response.response_time if baseline_response else 0.5
+                # Minimum 0.5s, scale with baseline, cap at 5s
+                adaptive_delay = max(0.5, min(baseline_time * 3, 5.0))
                 await asyncio.sleep(adaptive_delay)
-                
+
+                # Check if connection is still alive before sending victim request
+                # Server may have closed connection or sent RST
+                try:
+                    # Try to peek at any pending data (buffered responses)
+                    # This also validates the connection is still open
+                    if hasattr(client, '_reader') and client._reader:
+                        # Non-blocking read to flush any pending data
+                        try:
+                            pending_data = await asyncio.wait_for(
+                                client._reader.read(8192),
+                                timeout=0.1
+                            )
+                            if pending_data:
+                                # There was buffered data - might be from smuggled request
+                                pass
+                        except asyncio.TimeoutError:
+                            # No pending data, connection is clean
+                            pass
+                except Exception:
+                    # Connection may be closed, try to reconnect
+                    try:
+                        await client.close()
+                        await client.connect(host, port, use_ssl)
+                    except Exception:
+                        pass
+
                 # Step 2: Send victim request on SAME connection
                 victim_response = await client.send_and_receive(
                     victim_request,

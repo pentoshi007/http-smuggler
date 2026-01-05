@@ -14,6 +14,16 @@ from .http2_client import (
     H2FrameType,
     build_h2_smuggling_body,
 )
+from .callback_server import (
+    CallbackServer,
+    AsyncCallbackServer,
+    CallbackServerConfig,
+    CapturedRequest,
+    CaptureHandler,
+    Fake101Handler,
+    LootHandler,
+    get_local_ip,
+)
 
 __all__ = [
     # HTTP/1.1
@@ -28,5 +38,14 @@ __all__ = [
     "H2ErrorCode",
     "H2FrameType",
     "build_h2_smuggling_body",
+    # Callback servers
+    "CallbackServer",
+    "AsyncCallbackServer",
+    "CallbackServerConfig",
+    "CapturedRequest",
+    "CaptureHandler",
+    "Fake101Handler",
+    "LootHandler",
+    "get_local_ip",
 ]
 

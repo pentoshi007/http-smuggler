@@ -38,11 +38,11 @@ class TETEPayloadGenerator(PayloadGenerator):
     obfuscation variants to find parsing differences.
     """
     
-    def __init__(self, max_obfuscations: int = 50):
+    def __init__(self, max_obfuscations: int = 66):
         """Initialize generator.
-        
+
         Args:
-            max_obfuscations: Maximum number of TE obfuscations to use
+            max_obfuscations: Maximum number of TE obfuscations to use (default: all 66)
         """
         self.max_obfuscations = max_obfuscations
     

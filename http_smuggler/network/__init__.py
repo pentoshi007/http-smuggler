@@ -14,6 +14,13 @@ from .http2_client import (
     H2FrameType,
     build_h2_smuggling_body,
 )
+from .executor import (
+    TransportExecutor,
+    Http1Executor,
+    Http2Executor,
+    get_executor,
+    inject_http1_context,
+)
 from .callback_server import (
     CallbackServer,
     AsyncCallbackServer,
@@ -38,6 +45,11 @@ __all__ = [
     "H2ErrorCode",
     "H2FrameType",
     "build_h2_smuggling_body",
+    "TransportExecutor",
+    "Http1Executor",
+    "Http2Executor",
+    "get_executor",
+    "inject_http1_context",
     # Callback servers
     "CallbackServer",
     "AsyncCallbackServer",
@@ -48,4 +60,3 @@ __all__ = [
     "LootHandler",
     "get_local_ip",
 ]
-

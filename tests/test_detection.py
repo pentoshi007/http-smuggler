@@ -47,9 +47,9 @@ class TestTimingDetector:
         """Test detector initialization."""
         detector = TimingDetector()
         
-        assert detector.baseline_requests == 3
-        assert detector.timeout_threshold == 5.0
-        assert detector.confidence_threshold == 0.7
+        assert detector.baseline_requests == 10
+        assert detector.timeout_threshold == 3.0
+        assert detector.confidence_threshold == 0.75
     
     def test_init_with_config(self):
         """Test detector with custom config."""
@@ -69,7 +69,7 @@ class TestDifferentialDetector:
         """Test detector initialization."""
         detector = DifferentialDetector()
         
-        assert detector.confidence_threshold == 0.7
+        assert detector.confidence_threshold == 0.8
         assert 404 in detector.POISON_STATUS_CODES
     
     def test_poison_patterns(self):
@@ -78,4 +78,3 @@ class TestDifferentialDetector:
         
         assert len(detector.POISON_PATTERNS) > 0
         assert b"GPOST" in detector.POISON_PATTERNS
-

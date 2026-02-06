@@ -22,6 +22,11 @@ from http_smuggler.core.exceptions import (
     ConnectionTimeoutError,
     TimingDetectionError,
 )
+from http_smuggler.network.executor import (
+    Http2Executor,
+    get_executor,
+    inject_http1_context,
+)
 from http_smuggler.network.raw_socket import AsyncRawHttpClient, RawResponse
 from http_smuggler.payloads.generator import Payload, PayloadCategory
 from http_smuggler.utils.helpers import parse_url, TimingStats
@@ -89,15 +94,23 @@ class TimingDetector:
         self,
         safety_config: Optional[SafetyConfig] = None,
         network_config: Optional[NetworkConfig] = None,
+        confidence_mode: str = "high",
     ):
         self.safety = safety_config or SafetyConfig()
         self.network = network_config or NetworkConfig()
 
-        # Detection thresholds - tuned for better TryHackMe/real-world detection
-        self.baseline_requests = 10  # Increased for statistical validity
-        self.timeout_threshold = 3.0  # Lowered from 5.0 - catch faster timeouts
-        self.confidence_threshold = 0.6  # Lowered from 0.7 - more sensitive detection
-        self.confirmation_attempts = 2  # Retry suspicious payloads to confirm
+        # Detection thresholds tuned by confidence mode.
+        self.timeout_threshold = 3.0
+        if confidence_mode == "high":
+            self.baseline_requests = 10
+            self.confidence_threshold = 0.75
+        elif confidence_mode == "recall":
+            self.baseline_requests = 5
+            self.confidence_threshold = 0.55
+        else:
+            self.baseline_requests = 8
+            self.confidence_threshold = 0.65
+        self.confirmation_attempts = 2
     
     async def measure_baseline(
         self,
@@ -105,6 +118,7 @@ class TimingDetector:
         port: int,
         use_ssl: bool,
         path: str = "/",
+        transport: str = "http1",
     ) -> BaselineResult:
         """Measure baseline response time for normal requests.
         
@@ -119,7 +133,7 @@ class TimingDetector:
         """
         times = []
         
-        # Build a simple baseline request
+        # Build a simple baseline request for HTTP/1.1
         baseline_request = (
             f"GET {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
@@ -127,21 +141,38 @@ class TimingDetector:
             f"User-Agent: Mozilla/5.0 (compatible; HTTPSmuggler/1.0)\r\n"
             f"\r\n"
         ).encode()
+        baseline_request = inject_http1_context(
+            baseline_request,
+            headers=self.network.request_headers,
+            cookies=self.network.request_cookies,
+        )
         
         for i in range(self.baseline_requests):
             try:
-                async with AsyncRawHttpClient(self.network) as client:
-                    await client.connect(host, port, use_ssl)
-                    
-                    start = time.monotonic()
-                    response = await client.send_and_receive(
-                        baseline_request,
+                if transport == "http2":
+                    h2_executor = Http2Executor(self.network)
+                    response = await h2_executor.send_simple_request(
+                        host=host,
+                        port=port,
+                        path=path,
                         receive_timeout=self.safety.timing_detection_timeout,
+                        method="GET",
+                        headers=self.network.request_headers,
                     )
-                    elapsed = time.monotonic() - start
-                    
-                    if response.status_code and 200 <= response.status_code < 500:
-                        times.append(elapsed)
+                    elapsed = response.response_time
+                else:
+                    async with AsyncRawHttpClient(self.network) as client:
+                        await client.connect(host, port, use_ssl)
+
+                        start = time.monotonic()
+                        response = await client.send_and_receive(
+                            baseline_request,
+                            receive_timeout=self.safety.timing_detection_timeout,
+                        )
+                        elapsed = time.monotonic() - start
+
+                if response.status_code and 200 <= response.status_code < 500:
+                    times.append(elapsed)
             except Exception:
                 # Skip failed baseline requests
                 pass
@@ -177,6 +208,7 @@ class TimingDetector:
         port: int,
         use_ssl: bool,
         baseline: Optional[BaselineResult] = None,
+        request_path: str = "/",
     ) -> DetectionResult:
         """Detect potential vulnerability using timing analysis.
         
@@ -192,20 +224,25 @@ class TimingDetector:
         """
         # Get baseline if not provided
         if baseline is None:
-            baseline = await self.measure_baseline(host, port, use_ssl)
+            baseline = await self.measure_baseline(
+                host,
+                port,
+                use_ssl,
+                path=request_path,
+                transport=payload.transport,
+            )
         
         # Send payload and measure timing
         try:
-            async with AsyncRawHttpClient(self.network) as client:
-                await client.connect(host, port, use_ssl)
-                
-                start = time.monotonic()
-                response = await client.send_and_receive(
-                    payload.raw_request,
-                    receive_timeout=self.safety.timing_detection_timeout,
-                )
-                elapsed = time.monotonic() - start
-                
+            executor = get_executor(payload.transport, self.network)
+            response = await executor.send_payload(
+                payload=payload,
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+                receive_timeout=self.safety.timing_detection_timeout,
+            )
+            elapsed = response.response_time
         except ConnectionTimeoutError:
             # Timeout is actually a positive indicator for timing detection!
             elapsed = self.safety.timing_detection_timeout
@@ -417,4 +454,3 @@ async def timing_detect(
         parsed.port,
         parsed.use_ssl,
     )
-

@@ -1,11 +1,12 @@
 """Configuration classes for HTTP Smuggler."""
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Dict, Any
 from enum import Enum
 from urllib.parse import urlparse
 
 from .models import SmugglingVariant, HttpVersion
+from .variant_registry import get_enabled_variants_for_scan
 
 
 class ScanMode(Enum):
@@ -23,6 +24,21 @@ class OutputFormat(Enum):
     JSON = "json"
     TEXT = "text"
     MARKDOWN = "markdown"
+
+
+class ScanProfile(Enum):
+    """Scan profile tuned for environment constraints."""
+
+    LABS = "labs"
+    SAFE = "safe"
+
+
+class ConfidenceMode(Enum):
+    """Confidence/recall tradeoff mode."""
+
+    HIGH = "high"
+    BALANCED = "balanced"
+    RECALL = "recall"
 
 
 @dataclass
@@ -54,6 +70,10 @@ class NetworkConfig:
     # Retry settings
     max_retries: int = 3
     retry_delay: float = 1.0
+
+    # Request context propagated to active smuggling requests.
+    request_headers: Dict[str, str] = field(default_factory=dict)
+    request_cookies: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -141,16 +161,10 @@ class PayloadConfig:
 
     # Enabled variants
     enabled_variants: Set[SmugglingVariant] = field(
-        default_factory=lambda: {
-            SmugglingVariant.CL_TE,
-            SmugglingVariant.TE_CL,
-            SmugglingVariant.TE_TE,
-            SmugglingVariant.H2_CL,
-            SmugglingVariant.H2_TE,
-            SmugglingVariant.H2_CRLF,
-            SmugglingVariant.WS_VERSION,
-        }
+        default_factory=get_enabled_variants_for_scan
     )
+    # Requested but not testable (e.g. planned variants).
+    not_tested_variants: List[Dict[str, str]] = field(default_factory=list)
 
     # Obfuscation settings
     use_te_obfuscation: bool = True
@@ -238,6 +252,9 @@ class ScanConfig:
 
     # Scan mode
     mode: ScanMode = ScanMode.NORMAL
+    profile: ScanProfile = ScanProfile.LABS
+    confidence_mode: ConfidenceMode = ConfidenceMode.HIGH
+    confirm_attempts: int = 2
 
     # Protocol preferences
     preferred_version: Optional[HttpVersion] = None  # None = auto-detect
@@ -257,11 +274,29 @@ class ScanConfig:
 
     # Skip crawling entirely
     skip_crawl: bool = False
+    auto_listeners: bool = True
 
     # Verbosity
     verbose: bool = False
     debug: bool = False
     quiet: bool = False
+
+    def __post_init__(self) -> None:
+        """Apply profile-based defaults after construction."""
+        if self.profile == ScanProfile.SAFE:
+            if self.mode in (ScanMode.NORMAL, ScanMode.AGGRESSIVE):
+                self.mode = ScanMode.SAFE
+            self.exploit.enabled = False
+            self.safety.requests_per_second = min(self.safety.requests_per_second, 1.0)
+            self.safety.max_concurrent_tests = min(self.safety.max_concurrent_tests, 1)
+            self.safety.max_concurrent_per_host = min(
+                self.safety.max_concurrent_per_host,
+                1,
+            )
+            self.safety.min_delay_between_tests = max(
+                self.safety.min_delay_between_tests,
+                1.0,
+            )
 
     @classmethod
     def for_quick_scan(cls, target: str) -> "ScanConfig":
@@ -269,6 +304,9 @@ class ScanConfig:
         return cls(
             target_url=target,
             mode=ScanMode.SAFE,
+            profile=ScanProfile.SAFE,
+            confidence_mode=ConfidenceMode.HIGH,
+            confirm_attempts=2,
             skip_crawl=True,
             crawl=CrawlConfig(max_pages=10, max_endpoints=20),
             safety=SafetyConfig(
@@ -291,6 +329,9 @@ class ScanConfig:
         return cls(
             target_url=target,
             mode=ScanMode.AGGRESSIVE,
+            profile=ScanProfile.LABS,
+            confidence_mode=ConfidenceMode.BALANCED,
+            confirm_attempts=2,
             crawl=CrawlConfig(
                 max_depth=5,
                 max_pages=500,
@@ -315,6 +356,7 @@ class ScanConfig:
         return cls(
             target_url=target,
             mode=ScanMode.NORMAL,
+            profile=ScanProfile.LABS,
             force_http2=True,
             payload=PayloadConfig(
                 enabled_variants={
@@ -364,6 +406,9 @@ class ScanConfig:
         if self.force_http2 and self.force_http1:
             errors.append("Cannot force both HTTP/1.1 and HTTP/2")
 
+        if self.confirm_attempts <= 0:
+            errors.append("confirm_attempts must be >= 1")
+
         if self.safety.requests_per_second <= 0:
             errors.append("requests_per_second must be positive")
 
@@ -379,7 +424,7 @@ class ScanConfig:
         if self.crawl.max_depth < 0:
             errors.append("max_depth cannot be negative")
 
-        if not self.payload.enabled_variants:
+        if not self.payload.enabled_variants and not self.payload.not_tested_variants:
             errors.append("At least one smuggling variant must be enabled")
 
         return errors

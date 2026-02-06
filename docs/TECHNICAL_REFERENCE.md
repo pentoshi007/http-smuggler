@@ -2,7 +2,7 @@
 
 ## Vision
 
-A world-class, comprehensive HTTP request smuggling detection and exploitation tool that covers **all known smuggling variants** with **100+ payloads**, full domain crawling, and automated exploitation confirmation. Designed to be the go-to tool for security researchers, penetration testers, and bug bounty hunters.
+A reliability-focused HTTP request smuggling detection and exploitation tool with protocol-aware execution, variant capability tracking, endpoint crawling, and optional exploitation confirmation. The implementation status of each variant is explicit and enforced by the runtime registry.
 
 ---
 
@@ -19,42 +19,42 @@ HTTP Request Smuggling exploits discrepancies in how frontend servers (proxies, 
 
 ---
 
-## Supported Smuggling Variants
+## Smuggling Variant Capabilities
 
 ### Classic HTTP/1.1 Variants
 
-| Variant | Description | Frontend Parses | Backend Parses |
-|---------|-------------|-----------------|----------------|
-| **CL.TE** | Content-Length vs Transfer-Encoding | Content-Length | Transfer-Encoding |
-| **TE.CL** | Transfer-Encoding vs Content-Length | Transfer-Encoding | Content-Length |
-| **TE.TE** | Transfer-Encoding obfuscation | One TE variant | Different TE variant |
-| **CL.CL** | Duplicate Content-Length headers | First CL | Second CL |
-| **CL.0** | Content-Length ignored by backend | Content-Length | Ignores CL |
-| **0.CL** | Frontend ignores Content-Length | Ignores CL | Content-Length |
+| Variant | Description | Frontend Parses | Backend Parses | Status |
+|---------|-------------|-----------------|----------------|--------|
+| **CL.TE** | Content-Length vs Transfer-Encoding | Content-Length | Transfer-Encoding | implemented |
+| **TE.CL** | Transfer-Encoding vs Content-Length | Transfer-Encoding | Content-Length | implemented |
+| **TE.TE** | Transfer-Encoding obfuscation | One TE variant | Different TE variant | implemented |
+| **CL.CL** | Duplicate Content-Length headers | First CL | Second CL | planned |
+| **CL.0** | Content-Length ignored by backend | Content-Length | Ignores CL | planned |
+| **0.CL** | Frontend ignores Content-Length | Ignores CL | Content-Length | planned |
 
 ### HTTP/2 Downgrade Variants
 
-| Variant | Description | Attack Vector |
-|---------|-------------|---------------|
-| **H2.CL** | HTTP/2 to HTTP/1.1 with CL injection | Inject Content-Length in HTTP/2, backend processes as HTTP/1.1 |
-| **H2.TE** | HTTP/2 to HTTP/1.1 with TE injection | Inject Transfer-Encoding in HTTP/2 |
-| **H2.CRLF** | CRLF injection in HTTP/2 headers | Inject `\r\n` in header values to split requests |
-| **H2.0** | HTTP/2 request tunneling | Tunnel complete HTTP/1.1 request in HTTP/2 body |
-| **h2c** | HTTP/2 Cleartext upgrade smuggling | Abuse h2c upgrade mechanism |
+| Variant | Description | Attack Vector | Status |
+|---------|-------------|---------------|--------|
+| **H2.CL** | HTTP/2 to HTTP/1.1 with CL injection | Inject Content-Length in HTTP/2, backend processes as HTTP/1.1 | implemented |
+| **H2.TE** | HTTP/2 to HTTP/1.1 with TE injection | Inject Transfer-Encoding in HTTP/2 | implemented |
+| **H2.CRLF** | CRLF injection in HTTP/2 headers | Inject `\r\n` in header values to split requests | implemented |
+| **H2.0** | HTTP/2 request tunneling | Tunnel complete HTTP/1.1 request in HTTP/2 body | planned |
+| **h2c** | HTTP/2 Cleartext upgrade smuggling | Abuse h2c upgrade mechanism | planned |
 
 ### WebSocket Smuggling
 
-| Variant | Description | Attack Vector |
-|---------|-------------|---------------|
-| **WS.Version** | Invalid Sec-WebSocket-Version | Send invalid version (1337, 9999), vulnerable proxies ignore 426 response |
-| **WS.Upgrade** | WebSocket upgrade abuse | Exploit proxy tunnel established for WebSocket |
+| Variant | Description | Attack Vector | Status |
+|---------|-------------|---------------|--------|
+| **WS.Version** | Invalid Sec-WebSocket-Version | Send invalid version (1337, 9999), vulnerable proxies ignore 426 response | implemented |
+| **WS.Upgrade** | WebSocket upgrade abuse | Exploit proxy tunnel established for WebSocket | planned |
 
 ### Advanced Variants
 
-| Variant | Description | Attack Vector |
-|---------|-------------|---------------|
-| **Pause-Based** | Timing-based desync | Exploit read timeout differences between servers |
-| **CSD** | Client-Side Desync | Browser-based request smuggling |
+| Variant | Description | Attack Vector | Status |
+|---------|-------------|---------------|--------|
+| **Pause-Based** | Timing-based desync | Exploit read timeout differences between servers | experimental |
+| **CSD** | Client-Side Desync | Browser-based request smuggling | experimental |
 
 ---
 

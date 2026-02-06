@@ -6,7 +6,7 @@ HTTP request smuggling payloads across all variants.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Tuple
 from enum import Enum
 
 from http_smuggler.core.models import (
@@ -50,6 +50,17 @@ class Payload:
     expected_timeout: float = 5.0
     poison_prefix: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
+    transport: str = "http1"  # http1|http2|websocket|browser
+    http1_raw: Optional[bytes] = None
+    http2_headers: Optional[List[Tuple[str, str]]] = None
+    http2_body: Optional[bytes] = None
+    websocket_handshake: Optional[bytes] = None
+    websocket_followup: Optional[bytes] = None
+
+    def __post_init__(self) -> None:
+        """Keep backward compatibility with existing HTTP/1 payloads."""
+        if self.http1_raw is None:
+            self.http1_raw = self.raw_request
     
     def __str__(self) -> str:
         return f"Payload({self.name}, {self.variant.value})"
@@ -332,4 +343,3 @@ def extract_path_from_url(url: str) -> str:
     if parsed.query:
         path = f"{path}?{parsed.query}"
     return path
-

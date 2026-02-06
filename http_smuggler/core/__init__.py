@@ -3,6 +3,8 @@
 from .config import (
     ScanConfig,
     ScanMode,
+    ScanProfile,
+    ConfidenceMode,
     OutputFormat,
     NetworkConfig,
     CrawlConfig,
@@ -44,6 +46,8 @@ __all__ = [
     # Config
     "ScanConfig",
     "ScanMode",
+    "ScanProfile",
+    "ConfidenceMode",
     "OutputFormat",
     "NetworkConfig",
     "CrawlConfig",
@@ -80,4 +84,3 @@ __all__ = [
     "SmugglerEngine",
     "run_scan",
 ]
-

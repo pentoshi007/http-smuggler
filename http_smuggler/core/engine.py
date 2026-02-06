@@ -11,7 +11,7 @@ Orchestrates the complete scanning workflow:
 """
 
 import asyncio
-from typing import Optional, List, Set, Dict, Any
+from typing import Optional, List, Set, Dict, Any, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -25,6 +25,7 @@ from http_smuggler.core.models import (
     ScanResult,
     VulnerabilityReport,
     DetectionResult,
+    DetectionMethod,
     ExploitationResult,
     ProtocolProfile,
     SmugglingVariant,
@@ -38,7 +39,7 @@ from http_smuggler.core.exceptions import (
 )
 
 from http_smuggler.detection.protocol import ProtocolDetector
-from http_smuggler.detection.timing import TimingDetector
+from http_smuggler.detection.timing import TimingDetector, BaselineResult
 from http_smuggler.detection.differential import DifferentialDetector
 
 from http_smuggler.payloads.generator import Payload, PayloadCategory, CompositePayloadGenerator
@@ -64,6 +65,7 @@ from http_smuggler.analysis.reporter import Reporter
 
 from http_smuggler.utils.helpers import parse_url
 from http_smuggler.utils.logging import ScanLogger
+from http_smuggler.core.variant_registry import get_capability, VariantTransport
 
 
 @dataclass
@@ -95,12 +97,24 @@ class SmugglerEngine:
         
         # Initialize components
         self.protocol_detector = ProtocolDetector(config.network)
-        self.timing_detector = TimingDetector(config.safety, config.network)
-        self.differential_detector = DifferentialDetector(config.safety, config.network)
+        self.timing_detector = TimingDetector(
+            config.safety,
+            config.network,
+            confidence_mode=config.confidence_mode.value,
+        )
+        self.differential_detector = DifferentialDetector(
+            config.safety,
+            config.network,
+            confidence_mode=config.confidence_mode.value,
+        )
         self.crawler = DomainCrawler(config.crawl)
 
         # Initialize exploit runner with auto-listeners enabled in aggressive mode
-        auto_listeners = config.mode == ScanMode.AGGRESSIVE and config.exploit.enabled
+        auto_listeners = (
+            config.auto_listeners
+            and config.mode == ScanMode.AGGRESSIVE
+            and config.exploit.enabled
+        )
         self.exploit_runner = ExploitRunner(
             config.exploit,
             config.safety,
@@ -121,12 +135,15 @@ class SmugglerEngine:
         # State
         self._aborted = False
         self._progress = ScanProgress(phase="init")
+        self._baseline_cache: Dict[Tuple[str, str, str], BaselineResult] = {}
+        self._skipped: List[Dict[str, str]] = []
+        self._skip_index: Set[Tuple[str, str, str]] = set()
     
     def _init_generators(self) -> CompositePayloadGenerator:
         """Initialize payload generators based on config."""
         generator = CompositePayloadGenerator()
         
-        enabled = self.config.payload.enabled_variants
+        enabled = set(self.config.payload.enabled_variants)
         
         # Classic variants
         if SmugglingVariant.CL_TE in enabled:
@@ -160,6 +177,18 @@ class SmugglerEngine:
         
         if SmugglingVariant.CLIENT_SIDE in enabled:
             generator.add_generator(ClientSideDesyncPayloadGenerator())
+
+        wired_variants = {g.variant for g in generator.generators}
+        missing = enabled - wired_variants
+        for variant in sorted(missing, key=lambda v: v.value):
+            self.config.payload.not_tested_variants.append(
+                {
+                    "variant": variant.value,
+                    "reason": "not_wired_generator",
+                    "status": "planned",
+                }
+            )
+            self.config.payload.enabled_variants.discard(variant)
         
         return generator
     
@@ -195,6 +224,12 @@ class SmugglerEngine:
                 "websocket": protocol_profile.supports_websocket,
             }
         )
+
+        # Warn about explicitly requested but unimplemented variants.
+        for entry in self.config.payload.not_tested_variants:
+            self.logger.warning(
+                f"Variant {entry.get('variant')} not tested: {entry.get('reason')}"
+            )
         
         # Phase 2: Endpoint Discovery
         if self.config.skip_crawl or self.config.target_endpoints:
@@ -251,6 +286,8 @@ class SmugglerEngine:
             endpoints_discovered=len(endpoints),
             endpoints_tested=self._progress.tested_endpoints,
             vulnerabilities=vulnerabilities,
+            not_tested=self.config.payload.not_tested_variants,
+            skipped=self._skipped,
         )
     
     async def _detect_protocols(self, url: str) -> ProtocolProfile:
@@ -309,6 +346,8 @@ class SmugglerEngine:
     ) -> List[VulnerabilityReport]:
         """Test a single endpoint for smuggling vulnerabilities."""
         vulnerabilities = []
+        endpoint_parsed = parse_url(endpoint.url)
+        request_path = endpoint_parsed.full_path
         
         # Generate payloads for this endpoint
         payloads = self.payload_generator.generate_all(
@@ -331,7 +370,17 @@ class SmugglerEngine:
             
             # Filter based on scan mode
             if self.config.mode == ScanMode.PASSIVE:
-                continue  # Skip active testing in passive mode
+                self._record_skip(endpoint.url, variant, "passive_mode")
+                continue
+
+            applicable, reason = self._is_variant_applicable(
+                variant,
+                protocol,
+                use_ssl,
+            )
+            if not applicable:
+                self._record_skip(endpoint.url, variant, reason)
+                continue
             
             timing_payloads = [
                 p for p in variant_payloads
@@ -342,93 +391,292 @@ class SmugglerEngine:
                 p for p in variant_payloads
                 if p.category == PayloadCategory.DIFFERENTIAL
             ]
-            
-            # Phase 3: Timing-based detection (always safe)
-            for payload in timing_payloads:
-                self._progress.tested_payloads += 1
-                self.logger.payload_sent(payload.name, variant.value)
-                
-                timing_result = await self.timing_detector.detect(
-                    payload, host, port, use_ssl
+
+            best_timing = await self._run_timing_checks(
+                endpoint_url=endpoint.url,
+                endpoint_method=endpoint.method,
+                request_path=request_path,
+                timing_payloads=timing_payloads,
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+            )
+
+            best_diff: Optional[Tuple[DetectionResult, Payload]] = None
+            if self.config.mode != ScanMode.SAFE and differential_payloads:
+                best_diff = await self._run_differential_checks(
+                    request_path=request_path,
+                    differential_payloads=differential_payloads,
+                    host=host,
+                    port=port,
+                    use_ssl=use_ssl,
                 )
-                
-                if timing_result.vulnerable:
-                    self.logger.timing_result(
-                        endpoint.url,
-                        self.timing_detector.timeout_threshold,
-                        timing_result.response_time,
-                        True,
+
+            selected: Optional[Tuple[DetectionResult, Payload]] = None
+            if best_diff and best_diff[0].vulnerable:
+                selected = best_diff
+            elif best_timing and best_timing[0].vulnerable:
+                selected = best_timing
+
+            if selected:
+                detection, payload = selected
+                if (
+                    self.config.mode == ScanMode.SAFE
+                    and detection.detection_method == DetectionMethod.TIMING
+                ):
+                    vuln = self._build_timing_vulnerability(
+                        endpoint,
+                        detection,
+                        payload,
                     )
-                    
-                    # Phase 4: Differential confirmation (if not safe mode)
-                    if self.config.mode != ScanMode.SAFE and differential_payloads:
-                        diff_result = await self._confirm_with_differential(
-                            differential_payloads[0],
-                            host, port, use_ssl,
-                        )
-                        
-                        if diff_result and diff_result.vulnerable:
-                            vuln = await self._build_vulnerability(
-                                endpoint,
-                                diff_result,
-                                payload,
-                                host, port, use_ssl,
-                            )
-                            vulnerabilities.append(vuln)
-                            self._progress.vulnerabilities_found += 1
-                            break  # Found vulnerability for this variant
-                    else:
-                        # Safe mode: report based on timing only
-                        vuln = self._build_timing_vulnerability(
-                            endpoint,
-                            timing_result,
-                            payload,
-                        )
-                        vulnerabilities.append(vuln)
-                        self._progress.vulnerabilities_found += 1
-                        break
-                
-                # Rate limiting
-                await asyncio.sleep(self.config.safety.min_delay_between_tests)
+                else:
+                    vuln = await self._build_vulnerability(
+                        endpoint,
+                        detection,
+                        payload,
+                        host,
+                        port,
+                        use_ssl,
+                    )
+                vulnerabilities.append(vuln)
+                self._progress.vulnerabilities_found += 1
+            elif not timing_payloads and not differential_payloads:
+                self._record_skip(endpoint.url, variant, "no_payloads")
         
         return vulnerabilities
     
-    async def _confirm_with_differential(
+    async def _run_timing_checks(
+        self,
+        endpoint_url: str,
+        endpoint_method: str,
+        request_path: str,
+        timing_payloads: List[Payload],
+        host: str,
+        port: int,
+        use_ssl: bool,
+    ) -> Optional[Tuple[DetectionResult, Payload]]:
+        """Run timing payload checks and return the best candidate result."""
+        if not timing_payloads:
+            return None
+
+        best: Optional[Tuple[DetectionResult, Payload]] = None
+        for payload in timing_payloads:
+            if self._aborted:
+                break
+            self._progress.tested_payloads += 1
+            self.logger.payload_sent(payload.name, payload.variant.value)
+
+            baseline = await self._get_or_create_baseline(
+                endpoint_url=endpoint_url,
+                method=endpoint_method,
+                request_path=request_path,
+                transport=payload.transport,
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+            )
+            result = await self._confirm_timing_payload(
+                payload=payload,
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+                baseline=baseline,
+                request_path=request_path,
+            )
+
+            if best is None or result.confidence > best[0].confidence:
+                best = (result, payload)
+
+            if result.vulnerable:
+                self.logger.timing_result(
+                    endpoint_url,
+                    self.timing_detector.timeout_threshold,
+                    result.response_time,
+                    True,
+                )
+
+            await asyncio.sleep(self.config.safety.min_delay_between_tests)
+        return best
+
+    async def _run_differential_checks(
+        self,
+        request_path: str,
+        differential_payloads: List[Payload],
+        host: str,
+        port: int,
+        use_ssl: bool,
+    ) -> Optional[Tuple[DetectionResult, Payload]]:
+        """Run differential payload checks and return the best candidate result."""
+        if not differential_payloads:
+            return None
+
+        best: Optional[Tuple[DetectionResult, Payload]] = None
+        for payload in differential_payloads:
+            if self._aborted:
+                break
+            self._progress.tested_payloads += 1
+            self.logger.payload_sent(payload.name, payload.variant.value)
+            try:
+                result = await self.differential_detector.detect(
+                    payload,
+                    host,
+                    port,
+                    use_ssl,
+                    victim_path=request_path,
+                )
+            except Exception as e:
+                self.logger.debug(f"Differential detection failed for {payload.name}: {e}")
+                continue
+
+            result = await self._confirm_differential_result(
+                payload=payload,
+                first_result=result,
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+                request_path=request_path,
+            )
+
+            if best is None or result.confidence > best[0].confidence:
+                best = (result, payload)
+
+            await asyncio.sleep(self.config.safety.min_delay_between_tests)
+        return best
+
+    async def _confirm_timing_payload(
         self,
         payload: Payload,
         host: str,
         port: int,
         use_ssl: bool,
-        max_retries: int = 2,
-    ) -> Optional[DetectionResult]:
-        """Confirm vulnerability with differential detection.
+        baseline: BaselineResult,
+        request_path: str,
+    ) -> DetectionResult:
+        """Run confirmation attempts for timing payloads."""
+        attempts = max(1, self.config.confirm_attempts)
+        positives = 0
+        best: Optional[DetectionResult] = None
 
-        Includes retry logic for transient network failures.
-        """
-        last_error = None
+        for attempt in range(attempts):
+            result = await self.timing_detector.detect(
+                payload,
+                host,
+                port,
+                use_ssl,
+                baseline=baseline,
+                request_path=request_path,
+            )
+            if best is None or result.confidence > best.confidence:
+                best = result
+            if result.vulnerable:
+                positives += 1
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.1)
 
-        for attempt in range(max_retries):
-            try:
-                result = await self.differential_detector.detect(
-                    payload, host, port, use_ssl
-                )
-                if result and result.vulnerable:
-                    return result
-                # If not vulnerable on first try, try again (could be timing issue)
-                if attempt == 0 and result and not result.vulnerable:
-                    await asyncio.sleep(0.5)  # Brief delay before retry
-                    continue
-                return result
-            except Exception as e:
-                last_error = e
-                self.logger.debug(f"Differential detection attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    # Exponential backoff
-                    await asyncio.sleep(1.0 * (attempt + 1))
+        assert best is not None
+        required = 1 if attempts == 1 else (attempts // 2) + 1
+        best.vulnerable = positives >= required
+        return best
 
-        if last_error:
-            self.logger.debug(f"All differential detection attempts failed: {last_error}")
-        return None
+    async def _confirm_differential_result(
+        self,
+        payload: Payload,
+        first_result: DetectionResult,
+        host: str,
+        port: int,
+        use_ssl: bool,
+        request_path: str,
+    ) -> DetectionResult:
+        """Run confirmation attempts for differential payloads."""
+        attempts = max(1, self.config.confirm_attempts)
+        positives = 1 if first_result.vulnerable else 0
+        best = first_result
+
+        for attempt in range(1, attempts):
+            result = await self.differential_detector.detect(
+                payload,
+                host,
+                port,
+                use_ssl,
+                victim_path=request_path,
+            )
+            if result.confidence > best.confidence:
+                best = result
+            if result.vulnerable:
+                positives += 1
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.1)
+
+        required = 1 if attempts == 1 else (attempts // 2) + 1
+        best.vulnerable = positives >= required
+        return best
+
+    async def _get_or_create_baseline(
+        self,
+        endpoint_url: str,
+        method: str,
+        request_path: str,
+        transport: str,
+        host: str,
+        port: int,
+        use_ssl: bool,
+    ) -> BaselineResult:
+        """Fetch baseline from cache or measure it."""
+        cache_key = (endpoint_url, method, transport)
+        if cache_key not in self._baseline_cache:
+            self._baseline_cache[cache_key] = await self.timing_detector.measure_baseline(
+                host=host,
+                port=port,
+                use_ssl=use_ssl,
+                path=request_path,
+                transport=transport,
+            )
+        return self._baseline_cache[cache_key]
+
+    def _record_skip(
+        self,
+        endpoint: str,
+        variant: SmugglingVariant,
+        reason: str,
+    ) -> None:
+        """Record variant/endpoint skips for reporting."""
+        dedupe_key = (endpoint, variant.value, reason)
+        if dedupe_key in self._skip_index:
+            return
+        self._skip_index.add(dedupe_key)
+        self._skipped.append(
+            {
+                "endpoint": endpoint,
+                "variant": variant.value,
+                "reason": reason,
+            }
+        )
+
+    def _is_variant_applicable(
+        self,
+        variant: SmugglingVariant,
+        protocol: ProtocolProfile,
+        use_ssl: bool,
+    ) -> Tuple[bool, str]:
+        """Determine if variant transport is applicable to target protocol profile."""
+        capability = get_capability(variant)
+
+        if capability.transport == VariantTransport.HTTP2:
+            # Current executor implementation supports TLS ALPN h2 only.
+            if not use_ssl:
+                return False, "http2_tls_required"
+            if protocol.primary_version == HttpVersion.HTTP_2:
+                return True, ""
+            if "h2" in protocol.alpn_protocols:
+                return True, ""
+            return False, "protocol_not_applicable"
+
+        if capability.transport == VariantTransport.WEBSOCKET:
+            if not protocol.supports_websocket:
+                return False, "protocol_not_applicable"
+            return True, ""
+
+        return True, ""
     
     async def _build_vulnerability(
         self,
@@ -538,4 +786,3 @@ async def run_scan(
     
     engine = SmugglerEngine(config)
     return await engine.scan()
-

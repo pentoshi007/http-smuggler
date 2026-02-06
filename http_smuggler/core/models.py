@@ -76,6 +76,7 @@ class DetectionResult:
 class ExploitationResult:
     attempted: bool
     successful: bool
+    status: str = "not_confirmed"  # confirmed|likely|requires_victim|not_confirmed
     impact: Optional[str] = None
     captured_data: Optional[str] = None
     steps: List[Dict[str, Any]] = field(default_factory=list)
@@ -171,6 +172,8 @@ class ScanResult:
     endpoints_discovered: int
     endpoints_tested: int
     vulnerabilities: List[VulnerabilityReport]
+    not_tested: List[Dict[str, str]] = field(default_factory=list)
+    skipped: List[Dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -189,6 +192,8 @@ class ScanResult:
                 "endpoints_found": self.endpoints_discovered,
                 "endpoints_tested": self.endpoints_tested,
             },
+            "not_tested": self.not_tested,
+            "skipped": self.skipped,
             "vulnerabilities": [v.to_dict() for v in self.vulnerabilities],
             "summary": {
                 "total_vulnerabilities": len(self.vulnerabilities),

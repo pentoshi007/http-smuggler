@@ -20,17 +20,28 @@ from rich import box
 from http_smuggler.core.config import (
     ScanConfig,
     ScanMode,
+    ScanProfile,
+    ConfidenceMode,
     OutputFormat,
     PayloadConfig,
     ExploitConfig,
     SafetyConfig,
     CrawlConfig,
+    NetworkConfig,
+    ReportConfig,
 )
 from http_smuggler.core.models import SmugglingVariant
 from http_smuggler.core.engine import SmugglerEngine
 from http_smuggler.core.exceptions import ConfigurationError, ScanAbortedError
 from http_smuggler.analysis.reporter import Reporter
 from http_smuggler.utils.logging import setup_logging, console
+from http_smuggler.core.variant_registry import (
+    VariantStatus,
+    build_variant_map,
+    classify_requested_variants,
+    get_enabled_variants_for_scan,
+    list_capabilities,
+)
 
 
 # ASCII Banner
@@ -70,6 +81,24 @@ def cli():
     type=click.Choice(["passive", "safe", "normal", "aggressive"]),
     default="normal",
     help="Scan mode: passive (protocol only), safe (timing only), normal (timing+differential), aggressive (with exploitation)"
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["labs", "safe"]),
+    default="labs",
+    help="Scan profile: labs (higher signal testing) or safe (lower impact defaults)",
+)
+@click.option(
+    "--confidence-mode",
+    type=click.Choice(["high", "balanced", "recall"]),
+    default="high",
+    help="Detection strictness mode: high (low false positives), balanced, recall",
+)
+@click.option(
+    "--confirm-attempts",
+    type=int,
+    default=2,
+    help="Number of confirmation attempts per positive payload (default: 2)",
 )
 @click.option(
     "--output", "-o",
@@ -160,6 +189,9 @@ def cli():
 def scan(
     target: str,
     mode: str,
+    profile: str,
+    confidence_mode: str,
+    confirm_attempts: int,
     output: Optional[str],
     format: str,
     crawl: bool,
@@ -222,7 +254,11 @@ def scan(
     setup_logging(level=log_level, quiet=quiet)
     
     # Parse variants
-    enabled_variants = _parse_variants(variants, http2_only, classic_only)
+    enabled_variants, not_tested_variants = _parse_variants(
+        variants,
+        http2_only,
+        classic_only,
+    )
     
     # Parse headers
     custom_headers = _parse_headers(header)
@@ -231,15 +267,43 @@ def scan(
     cookies = _parse_cookies(cookie)
     
     # Build configuration
-    scan_mode = ScanMode(mode)
     output_format = OutputFormat(format)
-    
+
+    selected_profile = ScanProfile(profile)
+    scan_mode = ScanMode(mode)
+    if selected_profile == ScanProfile.SAFE and scan_mode in {
+        ScanMode.NORMAL,
+        ScanMode.AGGRESSIVE,
+    }:
+        if not quiet:
+            console.print(
+                "[yellow]Safe profile selected: forcing --mode safe and disabling exploitation.[/yellow]"
+            )
+        scan_mode = ScanMode.SAFE
+        exploit = False
+
+    if not enabled_variants and not_tested_variants:
+        scan_mode = ScanMode.PASSIVE
+        crawl = False
+        if not quiet:
+            console.print(
+                "[yellow]Only planned variants requested; running protocol detection only.[/yellow]"
+            )
+
     config = ScanConfig(
         target_url=target,
         mode=scan_mode,
+        profile=selected_profile,
+        confidence_mode=ConfidenceMode(confidence_mode),
+        confirm_attempts=confirm_attempts,
         skip_crawl=not crawl,
+        auto_listeners=auto_listeners,
         verbose=verbose,
         quiet=quiet,
+        network=NetworkConfig(
+            request_headers=custom_headers,
+            request_cookies=cookies,
+        ),
         crawl=CrawlConfig(
             max_depth=depth,
             max_endpoints=max_endpoints,
@@ -252,9 +316,10 @@ def scan(
         ),
         payload=PayloadConfig(
             enabled_variants=enabled_variants,
+            not_tested_variants=not_tested_variants,
         ),
         exploit=ExploitConfig(
-            enabled=exploit or mode == "aggressive",
+            enabled=exploit or scan_mode == ScanMode.AGGRESSIVE,
         ),
         report=ReportConfig(
             format=output_format,
@@ -263,7 +328,12 @@ def scan(
     )
 
     # Show smart mode info
-    if not quiet and mode == "aggressive" and (exploit or config.exploit.enabled) and auto_listeners:
+    if (
+        not quiet
+        and scan_mode == ScanMode.AGGRESSIVE
+        and config.exploit.enabled
+        and config.auto_listeners
+    ):
         from http_smuggler.network.callback_server import get_local_ip
         local_ip = get_local_ip()
         console.print("\n[bold cyan]SMART MODE ENABLED[/bold cyan]")
@@ -392,6 +462,8 @@ def _print_summary(result):
     table.add_row("Duration", f"{duration:.2f}s")
     table.add_row("Endpoints Tested", str(result.endpoints_tested))
     table.add_row("Vulnerabilities", str(len(result.vulnerabilities)))
+    table.add_row("Not Tested Variants", str(len(getattr(result, "not_tested", []))))
+    table.add_row("Skipped Checks", str(len(getattr(result, "skipped", []))))
     
     console.print(table)
     
@@ -419,62 +491,51 @@ def _parse_variants(
     variants_str: Optional[str],
     http2_only: bool,
     classic_only: bool,
-) -> set:
-    """Parse variant string into set of SmugglingVariant."""
-    if http2_only:
-        return {
-            SmugglingVariant.H2_CL,
-            SmugglingVariant.H2_TE,
-            SmugglingVariant.H2_CRLF,
-            SmugglingVariant.H2_TUNNEL,
+) -> tuple:
+    """Parse variant string into (enabled_variants, not_tested_variants)."""
+    capabilities = list_capabilities(
+        statuses={
+            VariantStatus.IMPLEMENTED,
+            VariantStatus.EXPERIMENTAL,
+            VariantStatus.PLANNED,
         }
+    )
+
+    if http2_only:
+        requested = {c.variant for c in capabilities if c.category == "HTTP/2"}
+        return classify_requested_variants(requested)
     
     if classic_only:
-        return {
-            SmugglingVariant.CL_TE,
-            SmugglingVariant.TE_CL,
-            SmugglingVariant.TE_TE,
-        }
+        requested = {c.variant for c in capabilities if c.category == "Classic"}
+        return classify_requested_variants(requested)
     
     if not variants_str:
-        # Default variants
-        return {
-            SmugglingVariant.CL_TE,
-            SmugglingVariant.TE_CL,
-            SmugglingVariant.TE_TE,
-            SmugglingVariant.H2_CL,
-            SmugglingVariant.H2_TE,
-            SmugglingVariant.H2_CRLF,
-            SmugglingVariant.WS_VERSION,
-        }
+        return get_enabled_variants_for_scan(), []
     
-    variant_map = {
-        "CL.TE": SmugglingVariant.CL_TE,
-        "TE.CL": SmugglingVariant.TE_CL,
-        "TE.TE": SmugglingVariant.TE_TE,
-        "CL.CL": SmugglingVariant.CL_CL,
-        "CL.0": SmugglingVariant.CL_0,
-        "0.CL": SmugglingVariant.ZERO_CL,
-        "H2.CL": SmugglingVariant.H2_CL,
-        "H2.TE": SmugglingVariant.H2_TE,
-        "H2.CRLF": SmugglingVariant.H2_CRLF,
-        "H2.0": SmugglingVariant.H2_0,
-        "h2c": SmugglingVariant.H2C,
-        "WS.Version": SmugglingVariant.WS_VERSION,
-        "WS.Upgrade": SmugglingVariant.WS_UPGRADE,
-        "Pause": SmugglingVariant.PAUSE_BASED,
-        "CSD": SmugglingVariant.CLIENT_SIDE,
-    }
+    variant_map = build_variant_map()
     
     result = set()
+    unknown_variants: List[str] = []
     for v in variants_str.split(","):
         v = v.strip()
-        if v in variant_map:
-            result.add(variant_map[v])
+        if not v:
+            continue
+        variant = variant_map.get(v) or variant_map.get(v.lower())
+        if variant:
+            result.add(variant)
         else:
-            console.print(f"[yellow]Warning: Unknown variant '{v}'[/yellow]")
+            unknown_variants.append(v)
+
+    if unknown_variants:
+        joined = ", ".join(sorted(set(unknown_variants)))
+        raise click.BadParameter(
+            f"Unknown variant(s): {joined}. Use 'http-smuggler list-variants' to view valid names."
+        )
     
-    return result or {SmugglingVariant.CL_TE, SmugglingVariant.TE_CL}
+    if not result:
+        return get_enabled_variants_for_scan(), []
+
+    return classify_requested_variants(result)
 
 
 def _parse_headers(header_tuples: tuple) -> dict:
@@ -653,34 +714,28 @@ def detect(target: str, timeout: float, verbose: bool):
 
 @cli.command()
 def list_variants():
-    """List all supported smuggling variants."""
+    """List variant capability matrix and implementation status."""
     print_banner()
     
-    table = Table(title="Supported Smuggling Variants", box=box.ROUNDED)
+    table = Table(title="Smuggling Variant Capability Matrix", box=box.ROUNDED)
     table.add_column("Variant", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Category", style="yellow")
-    
-    variants = [
-        ("CL.TE", "Content-Length vs Transfer-Encoding", "Classic"),
-        ("TE.CL", "Transfer-Encoding vs Content-Length", "Classic"),
-        ("TE.TE", "Transfer-Encoding obfuscation", "Classic"),
-        ("CL.CL", "Duplicate Content-Length", "Classic"),
-        ("CL.0", "Content-Length ignored by backend", "Classic"),
-        ("0.CL", "Frontend ignores Content-Length", "Classic"),
-        ("H2.CL", "HTTP/2 Content-Length injection", "HTTP/2"),
-        ("H2.TE", "HTTP/2 Transfer-Encoding injection", "HTTP/2"),
-        ("H2.CRLF", "HTTP/2 CRLF injection", "HTTP/2"),
-        ("H2.0", "HTTP/2 request tunneling", "HTTP/2"),
-        ("h2c", "HTTP/2 Cleartext upgrade", "HTTP/2"),
-        ("WS.Version", "WebSocket version smuggling", "WebSocket"),
-        ("WS.Upgrade", "WebSocket upgrade abuse", "WebSocket"),
-        ("Pause", "Pause-based desync", "Advanced"),
-        ("CSD", "Client-Side Desync", "Advanced"),
-    ]
-    
-    for variant, desc, category in variants:
-        table.add_row(variant, desc, category)
+    table.add_column("Transport", style="green")
+    table.add_column("Status", style="magenta")
+    table.add_column("Detectors", style="white")
+    table.add_column("Exploit", style="cyan")
+
+    for capability in list_capabilities():
+        table.add_row(
+            capability.variant.value,
+            capability.description,
+            capability.category,
+            capability.transport.value,
+            capability.status.value,
+            ", ".join(capability.detectors),
+            "yes" if capability.exploit_support else "no",
+        )
     
     console.print(table)
 
@@ -841,11 +896,5 @@ def listener(type: str, port: int, host: str, timeout: float):
                 if "cookie" in str(item.get("params", {})).lower():
                     console.print(f"     [red]COOKIE FOUND![/red]")
 
-
-# Import ReportConfig for the config
-from http_smuggler.core.config import ReportConfig
-
-
 if __name__ == "__main__":
     cli()
-

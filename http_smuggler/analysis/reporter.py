@@ -96,6 +96,8 @@ class Reporter:
         lines.append(f"- **Endpoints Discovered:** {scan_result.endpoints_discovered}")
         lines.append(f"- **Endpoints Tested:** {scan_result.endpoints_tested}")
         lines.append(f"- **Vulnerabilities Found:** {len(scan_result.vulnerabilities)}")
+        lines.append(f"- **Not Tested Variants:** {len(scan_result.not_tested)}")
+        lines.append(f"- **Skipped Checks:** {len(scan_result.skipped)}")
         lines.append("")
         
         # Severity breakdown
@@ -131,6 +133,40 @@ class Reporter:
         if profile.via_header:
             lines.append(f"- **Via:** {profile.via_header}")
         lines.append("")
+
+        if scan_result.not_tested or scan_result.skipped:
+            lines.append("## Capability Notes")
+            lines.append("")
+
+            if scan_result.not_tested:
+                lines.append("### Not Tested Variants")
+                lines.append("")
+                lines.append("| Variant | Status | Reason |")
+                lines.append("|---------|--------|--------|")
+                for entry in scan_result.not_tested:
+                    lines.append(
+                        f"| {entry.get('variant', 'unknown')} | "
+                        f"{entry.get('status', 'unknown')} | "
+                        f"{entry.get('reason', 'unknown')} |"
+                    )
+                lines.append("")
+
+            if scan_result.skipped:
+                lines.append("### Skipped Checks")
+                lines.append("")
+                lines.append("| Endpoint | Variant | Reason |")
+                lines.append("|----------|---------|--------|")
+                for entry in scan_result.skipped[:50]:
+                    lines.append(
+                        f"| `{entry.get('endpoint', '')}` | "
+                        f"{entry.get('variant', 'unknown')} | "
+                        f"{entry.get('reason', 'unknown')} |"
+                    )
+                if len(scan_result.skipped) > 50:
+                    lines.append(
+                        f"| ... | ... | {len(scan_result.skipped) - 50} additional skipped checks omitted |"
+                    )
+                lines.append("")
         
         # Vulnerabilities
         if scan_result.vulnerabilities:
@@ -212,6 +248,8 @@ class Reporter:
         if vuln.exploitation and self.config.include_exploitation_details:
             lines.append("#### Exploitation")
             lines.append("")
+            status = vuln.exploitation.status.replace("_", " ").title()
+            lines.append(f"- Status: **{status}**")
             if vuln.exploitation.successful:
                 lines.append(f"✅ **Exploitation Successful**")
                 lines.append(f"- Impact: {vuln.exploitation.impact}")
@@ -219,6 +257,8 @@ class Reporter:
                     lines.append(f"- Captured Data: `{vuln.exploitation.captured_data[:100]}...`")
             else:
                 lines.append(f"❌ **Exploitation Not Confirmed**")
+                if vuln.exploitation.error:
+                    lines.append(f"- Error: {vuln.exploitation.error}")
             lines.append("")
         
         # Impact
@@ -261,7 +301,32 @@ class Reporter:
         lines.append(f"Endpoints Discovered: {scan_result.endpoints_discovered}")
         lines.append(f"Endpoints Tested: {scan_result.endpoints_tested}")
         lines.append(f"Vulnerabilities Found: {len(scan_result.vulnerabilities)}")
+        lines.append(f"Not Tested Variants: {len(scan_result.not_tested)}")
+        lines.append(f"Skipped Checks: {len(scan_result.skipped)}")
         lines.append("")
+
+        if scan_result.not_tested:
+            lines.append("NOT TESTED VARIANTS")
+            lines.append("-" * 40)
+            for entry in scan_result.not_tested:
+                lines.append(
+                    f"{entry.get('variant', 'unknown')}: "
+                    f"{entry.get('reason', 'unknown')} "
+                    f"(status={entry.get('status', 'unknown')})"
+                )
+            lines.append("")
+
+        if scan_result.skipped:
+            lines.append("SKIPPED CHECKS")
+            lines.append("-" * 40)
+            for entry in scan_result.skipped[:20]:
+                lines.append(
+                    f"{entry.get('variant', 'unknown')} @ {entry.get('endpoint', '')}: "
+                    f"{entry.get('reason', 'unknown')}"
+                )
+            if len(scan_result.skipped) > 20:
+                lines.append(f"... {len(scan_result.skipped) - 20} additional skipped checks")
+            lines.append("")
         
         # Protocol Info
         lines.append("-" * 40)
@@ -289,7 +354,7 @@ class Reporter:
                 lines.append(f"    Evidence: {vuln.detection_result.evidence}")
                 
                 if vuln.exploitation:
-                    status = "CONFIRMED" if vuln.exploitation.successful else "Not Confirmed"
+                    status = vuln.exploitation.status.replace("_", " ").upper()
                     lines.append(f"    Exploitation: {status}")
                 
                 lines.append("")
@@ -358,4 +423,3 @@ def generate_report(
         reporter.save(scan_result, filepath, format)
     
     return content
-

@@ -21,6 +21,8 @@ from http_smuggler.core.exceptions import (
     ConnectionTimeoutError,
     DifferentialDetectionError,
 )
+from http_smuggler.network.executor import inject_http1_context
+from http_smuggler.network.http2_client import HTTP2RawClient
 from http_smuggler.network.raw_socket import AsyncRawHttpClient, RawResponse
 from http_smuggler.payloads.generator import Payload, PayloadCategory
 from http_smuggler.utils.helpers import parse_url
@@ -65,12 +67,17 @@ class DifferentialDetector:
         self,
         safety_config: Optional[SafetyConfig] = None,
         network_config: Optional[NetworkConfig] = None,
+        confidence_mode: str = "high",
     ):
         self.safety = safety_config or SafetyConfig()
         self.network = network_config or NetworkConfig()
 
-        # Detection settings - lowered threshold for better detection
-        self.confidence_threshold = 0.6  # Lowered from 0.7 for more sensitive detection
+        if confidence_mode == "high":
+            self.confidence_threshold = 0.8
+        elif confidence_mode == "recall":
+            self.confidence_threshold = 0.55
+        else:
+            self.confidence_threshold = 0.65
     
     async def detect(
         self,
@@ -94,6 +101,21 @@ class DifferentialDetector:
         """
         # Build victim request
         victim_request = self._build_victim_request(host, victim_path)
+        smuggle_request = smuggle_payload.raw_request
+        if smuggle_payload.transport != "http2":
+            smuggle_request = inject_http1_context(
+                smuggle_request,
+                headers=self.network.request_headers,
+                cookies=self.network.request_cookies,
+            )
+
+        if smuggle_payload.transport == "http2":
+            return await self._detect_http2(
+                smuggle_payload,
+                host,
+                port,
+                victim_path=victim_path,
+            )
         
         try:
             async with AsyncRawHttpClient(self.network) as client:
@@ -111,7 +133,7 @@ class DifferentialDetector:
                 
                 # Step 1: Send smuggle payload
                 smuggle_response = await client.send_and_receive(
-                    smuggle_payload.raw_request,
+                    smuggle_request,
                     receive_timeout=self.safety.differential_detection_timeout,
                 )
 
@@ -200,13 +222,133 @@ class DifferentialDetector:
     
     def _build_victim_request(self, host: str, path: str) -> bytes:
         """Build a simple victim request for differential testing."""
-        return (
+        request = (
             f"GET {path} HTTP/1.1\r\n"
             f"Host: {host}\r\n"
             f"Connection: keep-alive\r\n"
             f"User-Agent: Mozilla/5.0 (compatible; Victim/1.0)\r\n"
             f"\r\n"
         ).encode()
+        return inject_http1_context(
+            request,
+            headers=self.network.request_headers,
+            cookies=self.network.request_cookies,
+        )
+
+    async def _detect_http2(
+        self,
+        smuggle_payload: Payload,
+        host: str,
+        port: int,
+        victim_path: str,
+    ) -> DetectionResult:
+        """Differential detection path for true HTTP/2 payloads."""
+        headers = smuggle_payload.http2_headers or smuggle_payload.metadata.get("h2_headers")
+        body = smuggle_payload.http2_body
+        if body is None and "body" in smuggle_payload.metadata:
+            body = smuggle_payload.metadata.get("body")
+
+        if not headers:
+            return DetectionResult(
+                payload_name=smuggle_payload.name,
+                variant=smuggle_payload.variant,
+                vulnerable=False,
+                confidence=0.0,
+                response_time=0.0,
+                response_status=None,
+                evidence="Missing structured HTTP/2 payload headers",
+                detection_method=DetectionMethod.DIFFERENTIAL,
+            )
+
+        try:
+            async with HTTP2RawClient(self.network) as client:
+                await client.connect(host, port)
+
+                baseline_headers = [
+                    (":method", "GET"),
+                    (":path", victim_path or "/"),
+                    (":scheme", "https"),
+                    (":authority", host),
+                ]
+                for key, value in self.network.request_headers.items():
+                    baseline_headers.append((key.lower(), value))
+                if self.network.request_cookies:
+                    cookie_value = "; ".join(
+                        f"{k}={v}" for k, v in self.network.request_cookies.items()
+                    )
+                    baseline_headers.append(("cookie", cookie_value))
+
+                baseline_stream = await client.send_smuggling_request(headers=baseline_headers)
+                baseline_h2 = await client.receive_response(
+                    baseline_stream,
+                    timeout=self.safety.differential_detection_timeout,
+                )
+                baseline_response = self._h2_to_raw(baseline_h2.status, baseline_h2.body, baseline_h2.headers)
+
+                smuggle_stream = await client.send_smuggling_request(headers=headers, body=body)
+                smuggle_h2 = await client.receive_response(
+                    smuggle_stream,
+                    timeout=self.safety.differential_detection_timeout,
+                )
+                smuggle_response = self._h2_to_raw(smuggle_h2.status, smuggle_h2.body, smuggle_h2.headers)
+
+                await asyncio.sleep(0.5)
+
+                victim_stream = await client.send_smuggling_request(headers=baseline_headers)
+                victim_h2 = await client.receive_response(
+                    victim_stream,
+                    timeout=self.safety.differential_detection_timeout,
+                )
+                victim_response = self._h2_to_raw(victim_h2.status, victim_h2.body, victim_h2.headers)
+
+        except Exception as e:
+            return DetectionResult(
+                payload_name=smuggle_payload.name,
+                variant=smuggle_payload.variant,
+                vulnerable=False,
+                confidence=0.0,
+                response_time=0.0,
+                response_status=None,
+                evidence=f"HTTP/2 differential failed: {str(e)}",
+                detection_method=DetectionMethod.DIFFERENTIAL,
+            )
+
+        test_result = self._analyze_responses(
+            smuggle_payload,
+            baseline_response,
+            smuggle_response,
+            victim_response,
+        )
+
+        return DetectionResult(
+            payload_name=test_result.payload_name,
+            variant=test_result.variant,
+            vulnerable=test_result.is_poisoned
+            and test_result.confidence >= self.confidence_threshold,
+            confidence=test_result.confidence,
+            response_time=0.0,
+            response_status=victim_response.status_code if victim_response else None,
+            evidence=test_result.evidence,
+            detection_method=DetectionMethod.DIFFERENTIAL,
+        )
+
+    @staticmethod
+    def _h2_to_raw(
+        status: Optional[int],
+        body: Optional[bytes],
+        headers: Optional[dict] = None,
+    ) -> RawResponse:
+        """Convert HTTP/2 response values into RawResponse model."""
+        response_body = body or b""
+        response_headers = headers or {}
+        raw = f"HTTP/2 {status or ''}\r\n\r\n".encode() + response_body
+        return RawResponse(
+            raw_data=raw,
+            status_code=status,
+            status_text=str(status) if status is not None else None,
+            headers=response_headers,
+            body=response_body,
+        )
     
     def _analyze_responses(
         self,
@@ -418,4 +560,3 @@ async def differential_detect(
         parsed.use_ssl,
         parsed.path,
     )
-

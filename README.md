@@ -6,15 +6,15 @@
   <img src="https://img.shields.io/badge/payloads-100+-orange.svg" alt="100+ Payloads">
 </p>
 
-**Comprehensive HTTP Request Smuggling Detection & Exploitation Tool**
+**HTTP Request Smuggling Detection & Exploitation Tool**
 
-A powerful, automated security tool for detecting all known HTTP request smuggling vulnerabilities across HTTP/1.1, HTTP/2, and WebSocket protocols.
+A protocol-aware scanner for detecting and validating request smuggling vulnerabilities across HTTP/1.1, HTTP/2, and WebSocket surfaces with an explicit capability matrix.
 
 ## ✨ Features
 
 - 🔍 **Protocol Detection** - ALPN negotiation, HTTP/2, h2c, and WebSocket detection
 - 🕷️ **Domain Crawling** - Automatically discovers endpoints via sitemaps and recursive crawling
-- 🎯 **100+ Payloads** - Comprehensive coverage of all smuggling variants
+- 🎯 **Payload Matrix** - Variant-specific timing and differential payloads
 - ⚡ **Async Architecture** - Fast concurrent testing with rate limiting
 - 🛡️ **Safety Modes** - Passive, Safe, Normal, and Aggressive scan modes
 - 🎭 **Exploitation** - Optional confirmation with actual exploitation attempts
@@ -22,42 +22,44 @@ A powerful, automated security tool for detecting all known HTTP request smuggli
 - 🧠 **Smart Mode** - Auto-starts the right callback listeners based on vulnerability type
 - 🎧 **Built-in Listeners** - Capture server, Fake 101 server, and Loot server for exploitation
 
-## 🚀 Supported Variants
+## 🚀 Variant Capability Matrix
+
+Run `http-smuggler list-variants` to view the live matrix from the internal registry.
 
 ### Classic HTTP/1.1
 
-| Variant   | Description                                                  |
-| --------- | ------------------------------------------------------------ |
-| **CL.TE** | Frontend uses Content-Length, Backend uses Transfer-Encoding |
-| **TE.CL** | Frontend uses Transfer-Encoding, Backend uses Content-Length |
-| **TE.TE** | Transfer-Encoding obfuscation (66 mutations)                 |
-| **CL.CL** | Duplicate Content-Length headers                             |
-| **CL.0**  | Backend ignores Content-Length                               |
-| **0.CL**  | Frontend ignores body, Backend reads CL                      |
+| Variant   | Description                                                  | Status |
+| --------- | ------------------------------------------------------------ | ------ |
+| **CL.TE** | Frontend uses Content-Length, Backend uses Transfer-Encoding | Implemented |
+| **TE.CL** | Frontend uses Transfer-Encoding, Backend uses Content-Length | Implemented |
+| **TE.TE** | Transfer-Encoding obfuscation                                 | Implemented |
+| **CL.CL** | Duplicate Content-Length headers                             | Planned |
+| **CL.0**  | Backend ignores Content-Length                               | Planned |
+| **0.CL**  | Frontend ignores body, Backend reads CL                      | Planned |
 
 ### HTTP/2
 
-| Variant     | Description                                         |
-| ----------- | --------------------------------------------------- |
-| **H2.CL**   | HTTP/2 to HTTP/1.1 with Content-Length injection    |
-| **H2.TE**   | HTTP/2 to HTTP/1.1 with Transfer-Encoding injection |
-| **H2.CRLF** | CRLF injection in HTTP/2 headers                    |
-| **H2.0**    | HTTP/2 request tunneling                            |
-| **h2c**     | Cleartext HTTP/2 upgrade smuggling                  |
+| Variant     | Description                                         | Status |
+| ----------- | --------------------------------------------------- | ------ |
+| **H2.CL**   | HTTP/2 to HTTP/1.1 with Content-Length injection    | Implemented |
+| **H2.TE**   | HTTP/2 to HTTP/1.1 with Transfer-Encoding injection | Implemented |
+| **H2.CRLF** | CRLF injection in HTTP/2 headers                    | Implemented |
+| **H2.0**    | HTTP/2 request tunneling                            | Planned |
+| **h2c**     | Cleartext HTTP/2 upgrade smuggling                  | Planned |
 
 ### WebSocket
 
-| Variant        | Description                        |
-| -------------- | ---------------------------------- |
-| **WS.Version** | Sec-WebSocket-Version manipulation |
-| **WS.Upgrade** | Upgrade header smuggling           |
+| Variant        | Description                        | Status |
+| -------------- | ---------------------------------- | ------ |
+| **WS.Version** | Sec-WebSocket-Version manipulation | Implemented |
+| **WS.Upgrade** | Upgrade header smuggling           | Planned |
 
 ### Advanced
 
-| Variant         | Description                               |
-| --------------- | ----------------------------------------- |
-| **Pause-Based** | Timeout exploitation via strategic pauses |
-| **Client-Side** | Browser-powered desync (CSD)              |
+| Variant         | Description                               | Status |
+| --------------- | ----------------------------------------- | ------ |
+| **Pause-Based** | Timeout exploitation via strategic pauses | Experimental |
+| **Client-Side** | Browser-powered desync (CSD)              | Experimental |
 
 ## 📦 Installation
 
@@ -144,7 +146,7 @@ Commands:
   scan              Scan target for HTTP request smuggling vulnerabilities
   detect            Protocol detection only (no smuggling tests)
   listener          Start a callback listener for exploitation
-  list-variants     List all supported smuggling variants
+  list-variants     List smuggling variant capability matrix
   list-obfuscations List all Transfer-Encoding obfuscations
 
 Global Options:
@@ -160,6 +162,10 @@ http-smuggler scan [OPTIONS] TARGET
 Options:
   -m, --mode [passive|safe|normal|aggressive]
                               Scan mode (default: normal)
+  --profile [labs|safe]       Environment profile (default: labs)
+  --confidence-mode [high|balanced|recall]
+                              Detection strictness (default: high)
+  --confirm-attempts INTEGER  Confirmation attempts per payload (default: 2)
   -o, --output PATH           Output file path
   -f, --format [json|markdown|text]
                               Output format (default: json)
@@ -195,8 +201,8 @@ When running in aggressive mode with `--exploit`, the tool automatically starts 
 
 | Vulnerability Type | Auto-Started Listener | Purpose |
 | ------------------ | --------------------- | ------- |
-| CL.TE, TE.CL, TE.TE, H2.CL, H2.TE | Capture Server (port 8888) | Session hijacking |
-| WS.VERSION, WS.Upgrade | Fake 101 Server (port 9999) | WebSocket SSRF |
+| CL.TE, TE.CL, TE.TE, H2.CL, H2.TE, H2.CRLF | Capture Server (port 8888) | Session hijacking |
+| WS.VERSION | Fake 101 Server (port 9999) | WebSocket SSRF |
 | Client-Side Desync | Loot Server (port 8080) | Cookie exfiltration |
 
 **No manual intervention required** - the tool figures out what listener is needed and starts it automatically.
